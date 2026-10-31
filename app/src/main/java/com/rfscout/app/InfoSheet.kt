@@ -13,6 +13,8 @@ import android.widget.TextView
 internal class InfoSheet(
     ctx: Context,
     private val onTrack: (String) -> Unit,
+    private val onCalibrate: (String) -> Unit,
+    private val onMine: (String) -> Unit,
     private val onClose: () -> Unit
 ) : LinearLayout(ctx) {
 
@@ -21,11 +23,13 @@ internal class InfoSheet(
     private val graph = RssiGraphView(ctx)
     private val body = TextView(ctx)
     private val trackBtn = Button(ctx)
+    private val calBtn = Button(ctx)
+    private val mineBtn = Button(ctx)
     private var key: String? = null
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(0xF2212121.toInt())
+        background = Ui.box(d, 0xF20A1418.toInt(), Ui.BORDER, 12f)
         isClickable = true            // swallow touches so the map underneath does not move
         setPadding(dp(12), dp(8), dp(12), dp(8))
 
@@ -34,6 +38,7 @@ internal class InfoSheet(
         title.isSingleLine = true
         val close = Button(ctx).apply {
             text = "Close"
+            Ui.styleButton(ctx, this)
             setOnClickListener { onClose() }
         }
         val header = LinearLayout(ctx).apply { orientation = HORIZONTAL }
@@ -46,14 +51,23 @@ internal class InfoSheet(
         addView(graph, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(100)).apply { topMargin = dp(4) })
 
         body.textSize = 13f
-        body.setTextColor(0xFFDDDDDD.toInt())
+        body.setTextColor(Ui.TEXT)
         body.setPadding(0, dp(8), 0, dp(8))
         val scroll = ScrollView(ctx)
         scroll.addView(body)
         addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         trackBtn.setOnClickListener { key?.let(onTrack) }
-        addView(trackBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        calBtn.text = "Calibrate"
+        calBtn.setOnClickListener { key?.let(onCalibrate) }
+        mineBtn.text = "This is mine"
+        mineBtn.setOnClickListener { key?.let(onMine) }
+        val buttons = LinearLayout(ctx).apply { orientation = HORIZONTAL }
+        for (b in listOf(trackBtn, calBtn, mineBtn)) {
+            Ui.styleButton(ctx, b)
+            buttons.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
+        }
+        addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
     private fun dp(v: Int): Int = (v * d).toInt()
@@ -75,6 +89,10 @@ internal class InfoSheet(
         val sb = StringBuilder()
         if (extra != null) sb.append(extra).append("\n\n")
         if (t.detail.isNotBlank()) sb.append("ID: ").append(t.detail).append('\n')
+        val vendor = Vendors.detailLines(t)
+        if (vendor.isNotEmpty()) sb.append(vendor).append('\n')
+        Category.of(t)?.let { sb.append("Category (guess): ").append(it).append('\n') }
+        t.cell?.let { c -> sb.append(cellLines(c)) }
 
         sb.append("Signal now: ${t.rssi} dBm · average ${"%.0f".format(t.rssiSmooth)} dBm")
         if (t.history.size >= 2) {
@@ -96,7 +114,15 @@ internal class InfoSheet(
         val f = t.fix
         sb.append("\n\nPosition estimate: ")
         if (t.protocol == Protocol.CELL) {
-            sb.append("not possible for cell towers (signal strength only)")
+            if (f != null && f.tower && loc != null) {
+                val (dist, bearing) = Rf.distanceBearing(loc.latitude, loc.longitude, f.lat, f.lon)
+                sb.append("tower is about ${fmtDist(dist)} away at ${"%.0f".format(bearing)}° (0° = north)")
+                sb.append("\nSource: OpenCelliD database estimate, coverage range about ${fmtDist(t.towerRangeM.toDouble())}.")
+                sb.append("\nThis is crowd-sourced; positions are often off by hundreds of metres.")
+            } else {
+                sb.append("not possible by walking (towers are too far). ")
+                sb.append(if (t.towerNote.isNotEmpty()) t.towerNote else "Neighbor cells expose only a physical ID and frequency, so they stay signal-only.")
+            }
         } else if (f != null && loc != null) {
             val (dist, bearing) = Rf.distanceBearing(loc.latitude, loc.longitude, f.lat, f.lon)
             sb.append("${fmtDist(dist)} away at ${"%.0f".format(bearing)}° (0° = north)")
@@ -108,6 +134,20 @@ internal class InfoSheet(
         sb.append("\nSample points recorded: ${t.samples.size}")
         body.text = sb
 
-        trackBtn.text = if (tracking) "Tracking this signal ✓" else "Track this signal"
+        trackBtn.text = if (tracking) "Tracking ✓" else "Track"
+        calBtn.visibility = if (t.protocol == Protocol.CELL) GONE else VISIBLE
+        mineBtn.visibility = if (t.trackerKind != null) VISIBLE else GONE
+    }
+
+    private fun cellLines(c: CellIdent): String {
+        val sb = StringBuilder()
+        sb.append("Cell: ${c.radio} · MCC ${c.mcc} · MNC ${c.mnc}\n")
+        val areaName = if (c.radio == "GSM" || c.radio == "UMTS") "LAC" else "TAC"
+        sb.append("$areaName ${c.area} · cell ID ${c.cid}\n")
+        when (c.radio) {
+            "LTE" -> sb.append("eNodeB ${c.cid shr 8} · sector ${c.cid and 0xFF}\n")
+            "UMTS" -> sb.append("RNC ${c.cid shr 16} · cell ${c.cid and 0xFFFF}\n")
+        }
+        return sb.toString()
     }
 }

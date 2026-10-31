@@ -64,7 +64,37 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
 10. **Sightings** button: log of watchlist hits with the best position known, whether a mapped
     camera is within 150 m, share as CSV, and a link to the DeFlock report page.
 
-Keep the screen on while scanning. The app stops scanning when it goes to the background and resumes when you return.
+11. **Persistent camera data**: downloaded ALPR camera areas are kept in the app's storage, load at
+    startup (even offline) and refresh when older than a week. The layer on/off choice is remembered and
+    the status line shows how old the data is.
+12. **Tower lookup**: with a free [OpenCelliD](https://opencellid.org/register) API key (Settings), the cell
+    you are connected to is looked up by its full ID (MCC, MNC, TAC/LAC, cell ID). It gets a flag, distance
+    and arrow, plus a coverage circle. This is a crowd-sourced estimate. Neighbor cells only expose a
+    physical ID and frequency, so they stay signal-only. 5G NR cells are shown but not looked up. Results
+    are cached.
+13. **Screen-off scanning**: the **Screen-off** button runs a foreground service (ongoing notification with a
+    Stop button, wake lock). Android blocks unfiltered Bluetooth scans with the screen off, so only item
+    trackers and the watchlist company ID are scanned then; Wi-Fi scans are throttled by Android in the background.
+14. **Calibrate**: on a signal's details page, stand a known distance from the device and tap Calibrate.
+    One distance tunes the level; two distances at least 2x apart also tune the path-loss exponent. Saved per
+    protocol; reset in Settings.
+15. **Export**: shares `readings.csv` (time-stamped readings with phone position), `signals.csv` (one row per
+    signal with vendor, position and source) and `session.gpx` (your walk, estimated positions, sightings).
+16. **Vendor names**: Bluetooth company IDs from a built-in table; Wi-Fi/Bluetooth addresses from the IEEE
+    registry, which the build downloads into the app (`oui.csv`; if the download fails, only company IDs are
+    named). Private/random addresses are labeled as such.
+17. **Unknown tracker alert**: AirTag-style (Apple Find My), Samsung SmartTag, Tile and Google Find Hub
+    advertisements are recognized. A tag that stays in range for 8 minutes while you move 300 m away from
+    where you first saw it raises a notification and vibration. "This is mine" silences a tag. These formats are
+    community-reported, tags that rotate their address can evade detection, and a missing alert is not a guarantee.
+
+18. **New look**: dark panels with cyan accents. **Signals / Radar / Map** tabs. The **Radar** tab puts you in the
+    centre (up = where the phone points) with a dot per signal; filled dots have a direction estimate, hollow dots
+    on the lower arc have distance only. Signal cards show type, strength, vendor, a *category guess* (from name and
+    company, can be wrong) and first/last seen; the list shows the strongest 50. Secondary actions (ALPR layer,
+    Sightings, Export, Screen-off, Settings) moved into the **More** menu.
+
+Without Screen-off scanning, the app stops scanning when it goes to the background and resumes when you return.
 
 ## Known limits
 
@@ -78,6 +108,4 @@ Keep the screen on while scanning. The app stops scanning when it goes to the ba
 
 - Wi-Fi RTT (802.11mc) for real metre-level ranging to supporting access points
 - GNSS satellite signal view
-- Foreground service so scanning continues with the screen off
-- CSV / GPX export of the sweep
 - External SDR / ESP32 bridge for sub-GHz and 2.4 GHz protocols

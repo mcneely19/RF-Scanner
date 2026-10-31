@@ -71,8 +71,8 @@ class HelpActivity : Activity() {
             col, "5. Track One and Track All", FlagsDiagram(this),
             "Track: One shows only the signal you selected on the map. Track: All shows every signal that " +
                 "has a position estimate, each as a flag: Wi-Fi blue, BLE purple, BT indigo, Cell orange. " +
-                "With nothing selected, all flags are shown either way.\n\nCell towers have no position, so " +
-                "their flags sit in a row next to your dot."
+                "With nothing selected, all flags are shown either way.\n\nNeighbor cell towers have no position, so " +
+                "their flags sit in a row next to your dot. The tower you are connected to can be placed from a database (see More features)."
         )
         section(
             col, "6. What each type gives you", TableDiagram(this),
@@ -85,13 +85,41 @@ class HelpActivity : Activity() {
             "ALPR layer: turn it on, open the Map and zoom in to street level. The app loads license-plate-reader " +
                 "cameras that volunteers have mapped in OpenStreetMap (the data projects like DeFlock collect). " +
                 "Each red dot is a mapped camera, and the wedge shows which way it faces when that is known. " +
-                "Tap a dot for details. Mapped data can be incomplete or out of date.\n\n" +
+                "Tap a dot for details. Mapped data can be incomplete or out of date. Downloaded areas are saved on the phone, " +
+                "load at startup and work offline; areas older than a week refresh when you view them.\n\n" +
                 "Watchlist: signals whose name or Bluetooth company ID match patterns reported on Flock cameras " +
                 "get an orange list row and a red ALPR? flag. These patterns are community-reported, change over " +
                 "time and can match other devices, and many cameras broadcast nothing, so a hit is only a lead.\n\n" +
                 "Sightings: logs each hit with its best position and whether a mapped camera is nearby. " +
                 "You can share the log as CSV or open the DeFlock report page."
         )
+
+        col.addView(TextView(this).apply {
+            text = "More features"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dp(20), 0, dp(4))
+        })
+        col.addView(body(
+            "• Radar tab: you are the center and up is where the phone points. A filled dot has a direction estimate; " +
+                "a hollow dot on the lower arc has only a distance. Tap a dot for its details. Rings show the range, " +
+                "which rescales to fit.\n" +
+                "• Signal cards: each shows type, strength, vendor, a category guess (from its name and company; it can be wrong) " +
+                "and first/last seen. The list shows the strongest 50.\n" +
+                "• Cell tower: add a free OpenCelliD key in Settings. The tower you are connected to then gets a flag, " +
+                "a distance and an arrow. It is a crowd-sourced estimate, often off by hundreds of metres. " +
+                "Neighbor cells only share a physical ID, so they stay signal-only.\n" +
+                "• Calibrate: open a signal's details page, stand a known distance from the real device and tap " +
+                "Calibrate. Two different distances also tune the path-loss curve.\n" +
+                "• Vendor names: Bluetooth company IDs and Wi-Fi / Bluetooth addresses are matched to makers. " +
+                "Phones and many gadgets use private random addresses, which show no vendor.\n" +
+                "• Tracker alert: AirTag, SmartTag, Tile and Find Hub style tags that stay in range while you travel " +
+                "300 m over 8 minutes raise a notification. Tap \"This is mine\" to silence your own.\n" +
+                "• Screen-off: turn on Screen-off scanning, then press Start. A notification with a Stop button stays up " +
+                "while scanning. With the screen off only trackers and watchlist Bluetooth are scanned.\n" +
+                "• Export: shares two CSV files and a GPX file of your walk and positions."
+        ))
 
         col.addView(TextView(this).apply {
             text = "Tips"
@@ -105,7 +133,7 @@ class HelpActivity : Activity() {
                 "\"Wi-Fi scan throttling\" in Developer options.\n" +
                 "• Location must be on, or Android returns no Wi-Fi, Bluetooth or cell results.\n" +
                 "• Bluetooth devices that rotate their address show up as new signals.\n" +
-                "• Scanning pauses when the app is in the background and resumes when you return.\n" +
+                "• Without Screen-off scanning, scanning pauses when the app is in the background and resumes when you return.\n" +
                 "• Map tiles need internet. Everything else works offline."
         ))
 
@@ -117,7 +145,7 @@ class HelpActivity : Activity() {
         })
 
         setContentView(ScrollView(this).apply {
-            setBackgroundColor(0xFF121212.toInt())
+            setBackgroundColor(Ui.BG)
             addView(col)
         })
     }

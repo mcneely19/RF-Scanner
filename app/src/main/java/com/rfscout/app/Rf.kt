@@ -12,14 +12,20 @@ import kotlin.math.sqrt
 object Rf {
     private const val EARTH_R = 6_371_000.0
 
-    fun pathLossExponent(p: Protocol): Double = when (p) {
+    fun defaultExponent(p: Protocol): Double = when (p) {
         Protocol.WIFI -> 3.0
         Protocol.CELL -> 3.2
         else -> 2.5
     }
 
-    /** Expected RSSI at 1 m, or null if there is no sensible model (cell towers). */
-    fun refRssi1m(t: Track): Double? = when (t.protocol) {
+    /** Path-loss exponent in use: the calibrated one if you set it, else the default. */
+    fun pathLossExponent(p: Protocol): Double = Calib.exponentFor(p) ?: defaultExponent(p)
+
+    /** Expected RSSI at 1 m including any calibration, or null if there is no sensible model (cell towers). */
+    fun refRssi1m(t: Track): Double? = baseRef1m(t)?.plus(Calib.offsetDb(t.protocol))
+
+    /** Uncalibrated expected RSSI at 1 m. */
+    fun baseRef1m(t: Track): Double? = when (t.protocol) {
         Protocol.CELL -> null
         // assume ~18 dBm EIRP and free-space loss at 1 m: FSPL = 20log10(f_MHz) - 27.55
         Protocol.WIFI -> if (t.freqMhz > 0) 18.0 - (20 * log10(t.freqMhz.toDouble()) - 27.55) else null

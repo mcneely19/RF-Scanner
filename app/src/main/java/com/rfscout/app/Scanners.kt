@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanSettings
 import android.bluetooth.le.ScanResult as BleScanResult
 import android.content.BroadcastReceiver
@@ -16,6 +17,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelUuid
 import android.os.SystemClock
 import android.telephony.CellIdentityNr
 import android.telephony.CellInfo
@@ -125,6 +127,21 @@ class BleScanner(private val ctx: Context, private val out: (Reading) -> Unit) :
     private val adapter: BluetoothAdapter? =
         (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
     private var scanner: BluetoothLeScanner? = null
+    private var running = false
+
+    /**
+     * Android blocks unfiltered BLE scans while the screen is off, so in background mode only
+     * item-tracker and watchlist advertisements are requested (they are the ones that matter then).
+     */
+    var backgroundMode = false
+        set(v) {
+            if (field == v) return
+            field = v
+            if (running) {
+                stopScan()
+                startScan()
+            }
+        }
 
     private val callback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: BleScanResult) {
@@ -140,27 +157,63 @@ class BleScanner(private val ctx: Context, private val out: (Reading) -> Unit) :
     override fun start(): String? {
         val a = adapter ?: return "No Bluetooth"
         if (!a.isEnabled) return "Bluetooth is off"
-        val s = a.bluetoothLeScanner ?: return "BLE scanner unavailable"
+        if (a.bluetoothLeScanner == null) return "BLE scanner unavailable"
+        running = true
+        return startScan()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startScan(): String? {
+        val s = adapter?.bluetoothLeScanner ?: return "BLE scanner unavailable"
         return try {
+            val mode = if (backgroundMode) ScanSettings.SCAN_MODE_BALANCED else ScanSettings.SCAN_MODE_LOW_LATENCY
             s.startScan(
-                null,
-                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),
+                if (backgroundMode) backgroundFilters() else null,
+                ScanSettings.Builder().setScanMode(mode).build(),
                 callback
             )
             scanner = s
             null
         } catch (_: SecurityException) {
             "Bluetooth permission denied"
+        } catch (_: IllegalStateException) {
+            "Bluetooth turned off"
         }
     }
 
     @SuppressLint("MissingPermission")
-    override fun stop() {
+    private fun stopScan() {
         try {
             scanner?.stopScan(callback)
         } catch (_: Exception) {
         }
         scanner = null
+    }
+
+    override fun stop() {
+        running = false
+        stopScan()
+    }
+
+    private fun backgroundFilters(): List<ScanFilter> {
+        val none = ByteArray(0)
+        val list = ArrayList<ScanFilter>()
+        // Apple Find My network tags (AirTag style): manufacturer data starts 0x12 0x19
+        list.add(
+            ScanFilter.Builder()
+                .setManufacturerData(Trackers.APPLE_ID, byteArrayOf(0x12, 0x19), byteArrayOf(-1, -1))
+                .build()
+        )
+        // Samsung SmartTag and Tile: service data under their 16-bit UUIDs
+        for (u in listOf(Trackers.UUID_SAMSUNG, Trackers.UUID_TILE_A, Trackers.UUID_TILE_B)) {
+            list.add(ScanFilter.Builder().setServiceData(u, none, none).build())
+        }
+        // Google Find Hub network tags: service data 0xFEAA with frame type 0x40 or 0x41
+        list.add(ScanFilter.Builder().setServiceData(Trackers.UUID_GOOGLE, byteArrayOf(0x40), byteArrayOf(-1)).build())
+        list.add(ScanFilter.Builder().setServiceData(Trackers.UUID_GOOGLE, byteArrayOf(0x41), byteArrayOf(-1)).build())
+        // watchlist company ID
+        list.add(ScanFilter.Builder().setManufacturerData(Watch.BLE_COMPANY_ID, none, none).build())
+        return list
     }
 
     @SuppressLint("MissingPermission")
@@ -178,9 +231,37 @@ class BleScanner(private val ctx: Context, private val out: (Reading) -> Unit) :
             Reading(
                 key = "ble:$addr", protocol = Protocol.BLE, name = name, rssi = r.rssi,
                 freqMhz = 2440, txPower = tx, mfrId = mfrId,
+                tracker = Trackers.kindOf(rec),
                 detail = listOf(addr, vendor).filter { it.isNotEmpty() }.joinToString(" · ")
             )
         )
+    }
+}
+
+/**
+ * Advertisement formats used by item trackers. Reported formats, not guaranteed: vendors change
+ * them, and other products can reuse them. A match means "looks like a tracker".
+ */
+object Trackers {
+    const val APPLE_ID = 0x004C
+    val UUID_SAMSUNG: ParcelUuid = ParcelUuid.fromString("0000fd5a-0000-1000-8000-00805f9b34fb")
+    val UUID_TILE_A: ParcelUuid = ParcelUuid.fromString("0000feed-0000-1000-8000-00805f9b34fb")
+    val UUID_TILE_B: ParcelUuid = ParcelUuid.fromString("0000feec-0000-1000-8000-00805f9b34fb")
+    val UUID_GOOGLE: ParcelUuid = ParcelUuid.fromString("0000feaa-0000-1000-8000-00805f9b34fb")
+
+    fun kindOf(rec: android.bluetooth.le.ScanRecord?): String? {
+        if (rec == null) return null
+        val apple = rec.getManufacturerSpecificData(APPLE_ID)
+        if (apple != null && apple.size >= 2 && apple[0] == 0x12.toByte() && apple[1] == 0x19.toByte()) {
+            return "Apple Find My tag (AirTag style)"
+        }
+        if (rec.getServiceData(UUID_SAMSUNG) != null) return "Samsung SmartTag style"
+        if (rec.getServiceData(UUID_TILE_A) != null || rec.getServiceData(UUID_TILE_B) != null) return "Tile style"
+        val g = rec.getServiceData(UUID_GOOGLE)
+        if (g != null && g.isNotEmpty() && (g[0] == 0x40.toByte() || g[0] == 0x41.toByte())) {
+            return "Google Find Hub tag style"
+        }
+        return null
     }
 }
 
@@ -309,42 +390,66 @@ class CellScanner(private val ctx: Context, private val out: (Reading) -> Unit) 
         }
     }
 
-    private fun emit(key: String, name: String, dbm: Int, detail: String) {
+    private fun emit(key: String, name: String, dbm: Int, detail: String, ident: CellIdent?) {
         if (dbm == Int.MAX_VALUE || dbm == Int.MIN_VALUE) return
-        out(Reading(key = "cell:$key", protocol = Protocol.CELL, name = name, rssi = dbm, detail = detail))
+        out(
+            Reading(
+                key = "cell:$key", protocol = Protocol.CELL, name = name, rssi = dbm,
+                detail = detail, cell = ident
+            )
+        )
     }
 
+    private fun ident(radio: String, mcc: String?, mnc: String?, area: Int, cid: Long, serving: Boolean): CellIdent? {
+        if (!serving) return null          // neighbors only report PCI / frequency, no usable cell ID
+        val c = CellIdent(radio, mcc ?: "", mnc ?: "", area, cid, true)
+        return if (c.usable()) c else null
+    }
+
+    @Suppress("DEPRECATION")
     private fun publish(list: List<CellInfo>) {
         for (ci in list) {
-            val role = if (ci.isRegistered) "serving" else "neighbor"
+            val serving = ci.isRegistered
+            val role = if (serving) "serving" else "neighbor"
             when {
                 ci is CellInfoLte -> {
                     val id = ci.cellIdentity
                     val ss = ci.cellSignalStrength
+                    val mcc = if (Build.VERSION.SDK_INT >= 28) id.mccString else id.mcc.takeIf { it != Int.MAX_VALUE }?.toString()
+                    val mnc = if (Build.VERSION.SDK_INT >= 28) id.mncString else id.mnc.takeIf { it != Int.MAX_VALUE }?.toString()
                     emit(
                         "lte:${id.pci}:${id.earfcn}", "LTE PCI ${id.pci}", ss.dbm,
-                        "$role · EARFCN ${id.earfcn} · RSRQ ${ss.rsrq}"
+                        "$role · EARFCN ${id.earfcn} · RSRQ ${ss.rsrq}",
+                        ident("LTE", mcc, mnc, id.tac, id.ci.toLong(), serving)
                     )
                 }
                 Build.VERSION.SDK_INT >= 29 && ci is CellInfoNr -> {
                     val id = ci.cellIdentity as CellIdentityNr
                     emit(
                         "nr:${id.pci}:${id.nrarfcn}", "5G NR PCI ${id.pci}", ci.cellSignalStrength.dbm,
-                        "$role · NRARFCN ${id.nrarfcn}"
+                        "$role · NRARFCN ${id.nrarfcn}",
+                        // 5G cells are shown with their IDs but not looked up (see Towers)
+                        ident("NR", id.mccString, id.mncString, id.tac, id.nci, serving)
                     )
                 }
                 ci is CellInfoWcdma -> {
                     val id = ci.cellIdentity
+                    val mcc = if (Build.VERSION.SDK_INT >= 28) id.mccString else id.mcc.takeIf { it != Int.MAX_VALUE }?.toString()
+                    val mnc = if (Build.VERSION.SDK_INT >= 28) id.mncString else id.mnc.takeIf { it != Int.MAX_VALUE }?.toString()
                     emit(
                         "umts:${id.cid}:${id.lac}", "UMTS PSC ${id.psc}", ci.cellSignalStrength.dbm,
-                        "$role · UARFCN ${id.uarfcn}"
+                        "$role · UARFCN ${id.uarfcn}",
+                        ident("UMTS", mcc, mnc, id.lac, id.cid.toLong(), serving)
                     )
                 }
                 ci is CellInfoGsm -> {
                     val id = ci.cellIdentity
+                    val mcc = if (Build.VERSION.SDK_INT >= 28) id.mccString else id.mcc.takeIf { it != Int.MAX_VALUE }?.toString()
+                    val mnc = if (Build.VERSION.SDK_INT >= 28) id.mncString else id.mnc.takeIf { it != Int.MAX_VALUE }?.toString()
                     emit(
                         "gsm:${id.cid}:${id.lac}", "GSM CID ${id.cid}", ci.cellSignalStrength.dbm,
-                        "$role · ARFCN ${id.arfcn}"
+                        "$role · ARFCN ${id.arfcn}",
+                        ident("GSM", mcc, mnc, id.lac, id.cid.toLong(), serving)
                     )
                 }
             }

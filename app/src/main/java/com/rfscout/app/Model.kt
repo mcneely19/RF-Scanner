@@ -10,6 +10,23 @@ enum class Protocol(val label: String, val color: Int, val tag: String) {
 /** One point of the RSSI-over-time history shown on the info page. */
 class HistPt(val t: Long, val rssi: Int)
 
+/** Full identity of a cell, as far as Android reports it. Neighbor cells usually lack most of it. */
+class CellIdent(
+    val radio: String,          // LTE, NR, UMTS, GSM
+    val mcc: String,
+    val mnc: String,
+    val area: Int,              // TAC or LAC
+    val cid: Long,
+    val registered: Boolean     // true for the cell the phone is connected to
+) {
+    fun usable(): Boolean =
+        mcc.toIntOrNull() != null && mnc.toIntOrNull() != null &&
+            area >= 0 && area != Int.MAX_VALUE &&
+            cid >= 0 && cid != Long.MAX_VALUE && cid != Int.MAX_VALUE.toLong()
+
+    fun lookupKey(): String = "$radio-$mcc-$mnc-$area-$cid"
+}
+
 /** One raw measurement from a scanner. */
 data class Reading(
     val key: String,            // unique per emitter (BSSID, MAC, cell id ...)
@@ -20,6 +37,8 @@ data class Reading(
     val txPower: Int? = null,   // advertised TX power in dBm, if any
     val detail: String = "",
     val mfrId: Int? = null,     // Bluetooth company ID from manufacturer data, if advertised
+    val tracker: String? = null,// kind of item tracker this advertisement looks like
+    val cell: CellIdent? = null,
     val timeMs: Long = System.currentTimeMillis()
 )
 
@@ -27,7 +46,13 @@ data class Reading(
 data class Sample(val lat: Double, val lon: Double, val rssi: Double)
 
 /** Estimated transmitter position from the walked samples. */
-data class Fix(val lat: Double, val lon: Double, val rmsDb: Double, val ambiguous: Boolean)
+data class Fix(
+    val lat: Double,
+    val lon: Double,
+    val rmsDb: Double,
+    val ambiguous: Boolean,
+    val tower: Boolean = false      // true = position taken from a cell tower database, not from walking
+)
 
 /** Everything we know about one emitter. */
 class Track(val key: String, val protocol: Protocol) {
@@ -36,6 +61,8 @@ class Track(val key: String, val protocol: Protocol) {
     var freqMhz = 0
     var txPower: Int? = null
     var mfrId: Int? = null
+    var trackerKind: String? = null
+    var cell: CellIdent? = null
     var watch: WatchHit? = null
     var rssi = 0
     var rssiSmooth = 0.0
@@ -49,12 +76,27 @@ class Track(val key: String, val protocol: Protocol) {
     var fixSeq = -1             // sampleSeq the current fix was computed from
     var fix: Fix? = null
 
+    // cell towers: where the database says the tower is
+    var towerNote = ""
+    var towerRangeM = 0
+
+    // item-tracker watch: how far the user has travelled while this tag stayed in range
+    var firstLat = 0.0
+    var firstLon = 0.0
+    var hasFirstPos = false
+    var followSinceMs = 0L
+    var maxTravelM = 0.0
+    var following = false
+    var alerted = false
+
     fun update(r: Reading) {
         if (name.isEmpty() || !r.name.startsWith("(")) name = r.name
         if (r.detail.isNotEmpty()) detail = r.detail
         if (r.freqMhz > 0) freqMhz = r.freqMhz
         txPower = r.txPower ?: txPower
         mfrId = r.mfrId ?: mfrId
+        trackerKind = r.tracker ?: trackerKind
+        cell = r.cell ?: cell
         rssi = r.rssi
         rssiSmooth = if (count == 0) r.rssi.toDouble() else 0.35 * r.rssi + 0.65 * rssiSmooth
         lastSeenMs = r.timeMs
