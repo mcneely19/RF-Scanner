@@ -150,6 +150,42 @@ object Rf {
     }
 }
 
+/**
+ * The mirror-image position of an ambiguous fix: the fix reflected across the line of the walked path.
+ * A nearly straight path cannot tell which side of it the transmitter is on, so both are possible.
+ */
+fun mirrorFix(t: Track, f: Fix): Pair<Double, Double>? {
+    val s = t.samples
+    if (s.size < 3) return null
+    val lat0 = f.lat
+    val lon0 = f.lon
+    val cosLat = cos(Math.toRadians(lat0))
+    val k = 6_371_000.0
+    val xs = DoubleArray(s.size) { Math.toRadians(s[it].lon - lon0) * k * cosLat }
+    val ys = DoubleArray(s.size) { Math.toRadians(s[it].lat - lat0) * k }
+    val mx = xs.average()
+    val my = ys.average()
+    var sxx = 0.0
+    var syy = 0.0
+    var sxy = 0.0
+    for (i in xs.indices) {
+        val dx = xs[i] - mx
+        val dy = ys[i] - my
+        sxx += dx * dx; syy += dy * dy; sxy += dx * dy
+    }
+    if (sxx + syy < 1e-6) return null
+    val ang = 0.5 * kotlin.math.atan2(2 * sxy, sxx - syy)     // direction of the path
+    val ux = cos(ang)
+    val uy = kotlin.math.sin(ang)
+    // fix sits at (0,0) here; reflect it across the line through (mx,my) with direction (ux,uy)
+    val px = 0.0 - mx
+    val py = 0.0 - my
+    val along = px * ux + py * uy
+    val rx = 2 * along * ux - px + mx
+    val ry = 2 * along * uy - py + my
+    return (lat0 + Math.toDegrees(ry / k)) to (lon0 + Math.toDegrees(rx / (k * cosLat)))
+}
+
 fun rssiColor(rssi: Double): Int = when {
     rssi > -55 -> 0xFF4CAF50.toInt()
     rssi > -70 -> 0xFFCDDC39.toInt()

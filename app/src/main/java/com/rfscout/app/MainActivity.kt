@@ -798,7 +798,16 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             val alert = t.following || t.watch != null
             if (f != null && l != null) {
                 val (d, b) = Rf.distanceBearing(l.latitude, l.longitude, f.lat, f.lon)
-                items.add(RadarDot(t.key, t.protocol.color or 0xFF000000.toInt(), d, relAngle(b - headingDeg), true, sel, alert))
+                var gDist: Double? = null
+                var gDeg = 0.0
+                if (f.ambiguous && !f.tower) {
+                    mirrorFix(t, f)?.let { (mlat, mlon) ->
+                        val (md, mb) = Rf.distanceBearing(l.latitude, l.longitude, mlat, mlon)
+                        gDist = md
+                        gDeg = relAngle(mb - headingDeg)
+                    }
+                }
+                items.add(RadarDot(t.key, t.protocol.color or 0xFF000000.toInt(), d, relAngle(b - headingDeg), true, sel, alert, gDist, gDeg))
                 dists.add(d)
                 withDir++
             } else {
