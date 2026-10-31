@@ -1,11 +1,14 @@
 package com.rfscout.app
 
-enum class Protocol(val label: String, val color: Int) {
-    WIFI("Wi-Fi", 0xFF2196F3.toInt()),
-    BLE("BLE", 0xFFBA68C8.toInt()),
-    BT_CLASSIC("BT Classic", 0xFF7986CB.toInt()),
-    CELL("Cellular", 0xFFFFB74D.toInt())
+enum class Protocol(val label: String, val color: Int, val tag: String) {
+    WIFI("Wi-Fi", 0xFF1E88E5.toInt(), "Wi-Fi"),
+    BLE("BLE", 0xFF8E24AA.toInt(), "BLE"),
+    BT_CLASSIC("BT Classic", 0xFF3949AB.toInt(), "BT"),
+    CELL("Cellular", 0xFFEF6C00.toInt(), "Cell")
 }
+
+/** One point of the RSSI-over-time history shown on the info page. */
+class HistPt(val t: Long, val rssi: Int)
 
 /** One raw measurement from a scanner. */
 data class Reading(
@@ -34,8 +37,10 @@ class Track(val key: String, val protocol: Protocol) {
     var rssi = 0
     var rssiSmooth = 0.0
     var lastSeenMs = 0L
+    var firstSeenMs = 0L
     var count = 0
 
+    val history = ArrayList<HistPt>()
     val samples = ArrayList<Sample>()
     var sampleSeq = 0           // bumps on every new sample
     var fixSeq = -1             // sampleSeq the current fix was computed from
@@ -49,6 +54,11 @@ class Track(val key: String, val protocol: Protocol) {
         rssi = r.rssi
         rssiSmooth = if (count == 0) r.rssi.toDouble() else 0.35 * r.rssi + 0.65 * rssiSmooth
         lastSeenMs = r.timeMs
+        if (firstSeenMs == 0L) firstSeenMs = r.timeMs
+        if (history.isEmpty() || r.timeMs - history[history.size - 1].t >= 500) {
+            history.add(HistPt(r.timeMs, r.rssi))
+            if (history.size > MAX_HISTORY) history.removeAt(0)
+        }
         count++
     }
 
@@ -60,5 +70,6 @@ class Track(val key: String, val protocol: Protocol) {
 
     companion object {
         const val MAX_SAMPLES = 150
+        const val MAX_HISTORY = 240
     }
 }

@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ShapeDrawable
 import android.graphics.drawable.shapes.OvalShape
@@ -71,7 +72,11 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     private var declination = 0f
     private var targetBearing: Double? = null
     private var lastArrowMs = 0L
+    private var trackAll = false
+    private var sheetKey: String? = null
 
+    private lateinit var modeBtn: Button
+    private lateinit var sheet: InfoSheet
     private lateinit var startBtn: Button
     private lateinit var listView: ListView
     private lateinit var map: MapView
@@ -150,10 +155,15 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 tracks.clear()
                 breadcrumb.clear()
                 selectedKey = null
+                closeSheet()
                 refreshUi()
             }
         }
-        root.addView(row(startBtn, clearBtn))
+        val helpBtn = Button(this).apply {
+            text = "Help"
+            setOnClickListener { startActivity(Intent(this@MainActivity, HelpActivity::class.java)) }
+        }
+        root.addView(row(startBtn, clearBtn, helpBtn))
 
         // protocol toggles
         val toggles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -162,6 +172,12 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 CheckBox(this).apply {
                     text = p.label.substringBefore(' ')
                     textSize = 12f
+                    setTextColor(Color.WHITE)
+                    // blue when ticked, grey when not
+                    buttonTintList = ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(0xFF2196F3.toInt(), 0xFF9E9E9E.toInt())
+                    )
                     isChecked = true
                     setOnCheckedChangeListener { _, on ->
                         protoOn[p] = on
@@ -185,7 +201,15 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 showMap(true)
             }
         }
-        root.addView(row(tabSignals, tabMap, centerBtn))
+        modeBtn = Button(this).apply {
+            text = "Track: One"
+            setOnClickListener {
+                trackAll = !trackAll
+                text = if (trackAll) "Track: All" else "Track: One"
+                refreshUi()
+            }
+        }
+        root.addView(row(tabSignals, tabMap, centerBtn, modeBtn))
 
         statusText = TextView(this).apply {
             setPadding(dp(12), dp(4), dp(12), dp(4))
@@ -203,6 +227,10 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 this@MainActivity.adapter.notifyDataSetChanged()
                 updateTarget()
             }
+            setOnItemLongClickListener { _, _, pos, _ ->
+                openSheet(this@MainActivity.adapter.items[pos].key)
+                true
+            }
         }
         map = MapView(this).apply {
             setTileSource(TileSourceFactory.MAPNIK)
@@ -214,6 +242,19 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val content = FrameLayout(this)
         content.addView(listView, FrameLayout.LayoutParams(-1, -1))
         content.addView(map, FrameLayout.LayoutParams(-1, -1))
+        sheet = InfoSheet(
+            this,
+            onTrack = { key ->
+                selectedKey = key
+                refreshUi()
+            },
+            onClose = { closeSheet() }
+        )
+        sheet.visibility = View.GONE
+        content.addView(
+            sheet,
+            FrameLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.42f).toInt(), Gravity.BOTTOM)
+        )
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
 
         // target panel
@@ -463,6 +504,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         // re-fit positions only for the strongest few + the selected one, and only when new samples arrived
         val toFit = LinkedHashSet<Track>(visible.take(6))
         selectedKey?.let { k -> tracks[k]?.let { toFit.add(it) } }
+        sheetKey?.let { k -> tracks[k]?.let { toFit.add(it) } }
         for (t in toFit) {
             if (t.sampleSeq != t.fixSeq) {
                 t.fixSeq = t.sampleSeq
@@ -472,7 +514,30 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
         updateStatus(visible)
         updateTarget()
+        if (sheetKey != null) bindSheet()
         if (map.visibility == View.VISIBLE) updateMap(visible)
+    }
+
+    // ------------------------------------------------------------------ info sheet
+
+    private fun openSheet(key: String) {
+        sheetKey = key
+        sheet.visibility = View.VISIBLE
+        bindSheet()
+    }
+
+    private fun closeSheet() {
+        sheetKey = null
+        sheet.visibility = View.GONE
+    }
+
+    private fun bindSheet() {
+        val t = sheetKey?.let { tracks[it] }
+        if (t == null) {
+            closeSheet()
+            return
+        }
+        sheet.bind(t, loc, t.key == selectedKey)
     }
 
     private fun updateStatus(visible: List<Track>) {
@@ -540,7 +605,9 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val ov = map.overlays
         ov.clear()
         val l = loc
-        val sel = selectedKey?.let { tracks[it] }
+        val sel = selectedKey?.let { tracks[it] }?.takeIf { protoOn[it.protocol] == true }
+        val onlySel = sel != null && !trackAll
+        val density = resources.displayMetrics.density
 
         if (breadcrumb.size > 1) {
             ov.add(Polyline().apply {
@@ -565,23 +632,36 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             }
         }
 
-        // estimated transmitter positions
+        // estimated transmitter positions, one flag per signal. Track: One hides all but the selected signal.
         for (t in visible) {
+            if (onlySel && t.key != selectedKey) continue
             val f = t.fix ?: continue
-            val isSel = t.key == selectedKey
             ov.add(Marker(map).apply {
                 position = GeoPoint(f.lat, f.lon)
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                icon = dot(t.protocol.color, dp(if (isSel) 20 else 13))
-                title = t.name
-                snippet = "${t.protocol.label} · ${t.rssi} dBm"
-                setOnMarkerClickListener { m, _ ->
-                    selectedKey = t.key
-                    updateTarget()
-                    m.showInfoWindow()
+                setAnchor(FlagDrawable.POLE_ANCHOR_X, Marker.ANCHOR_BOTTOM)
+                icon = FlagDrawable(t.protocol.tag, t.protocol.color, density, t.key == selectedKey)
+                setOnMarkerClickListener { _, _ ->
+                    openSheet(t.key)
                     true
                 }
             })
+        }
+
+        // cell towers have no position: park their flags in a row beside your dot
+        if (l != null) {
+            val cells = visible.filter { it.protocol == Protocol.CELL && (!onlySel || it.key == selectedKey) }
+                .take(4)
+            for ((k, t) in cells.withIndex()) {
+                ov.add(Marker(map).apply {
+                    position = GeoPoint(l.latitude, l.longitude)
+                    setAnchor(-0.35f - k * 1.05f, Marker.ANCHOR_BOTTOM)
+                    icon = FlagDrawable(t.protocol.tag, t.protocol.color, density, t.key == selectedKey)
+                    setOnMarkerClickListener { _, _ ->
+                        openSheet(t.key)
+                        true
+                    }
+                })
+            }
         }
 
         // line from you to the selected fix

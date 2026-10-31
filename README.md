@@ -45,7 +45,13 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
 3. Walk around. The bottom panel shows RSSI, model distance, and, once enough points are collected,
    a fitted distance and bearing with an arrow.
 4. **Map** tab: your position and accuracy, your walked path, sample points coloured by signal
-   strength, a model range ring, estimated transmitter markers, and a line to the one you track.
+   strength, a model range ring, a flag for each estimated transmitter, and a line to the one you track.
+5. **Track: One / Track: All** button: One shows only the selected signal on the map; All shows
+   every signal's flag. With nothing selected all flags show either way.
+6. **Flags** are labeled by type (Wi-Fi, BLE, BT, Cell). Tap one for the details page: RSSI graph,
+   frequency, distance guess, position fit, and a Track button. Long-press a list row for the same page.
+   Cell towers have no position, so their flags sit in a row beside your dot.
+7. **Help** button: illustrated explanation of how the app works.
 
 Keep the screen on while scanning. The app stops scanning when it goes to the background and resumes when you return.
 
