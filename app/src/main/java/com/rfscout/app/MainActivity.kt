@@ -3,6 +3,7 @@ package com.rfscout.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -18,6 +19,7 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -38,6 +40,10 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import org.osmdroid.config.Configuration
+import org.osmdroid.events.DelayedMapListener
+import org.osmdroid.events.MapListener
+import org.osmdroid.events.ScrollEvent
+import org.osmdroid.events.ZoomEvent
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -45,12 +51,16 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.Polyline
 import java.io.File
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sin
+
+/** A watchlist hit counts as "near a mapped camera" when one is mapped within this many metres. */
+private const val MAPPED_RADIUS_M = 150.0
 
 class MainActivity : Activity(), SensorEventListener, LocationListener {
 
@@ -74,7 +84,14 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     private var lastArrowMs = 0L
     private var trackAll = false
     private var sheetKey: String? = null
+    private var alprOn = false
+    private var sightDirty = false
+    private var lastSightSave = 0L
+    private val sightings = LinkedHashMap<String, Sighting>()
+    private val prefs by lazy { getSharedPreferences("rfscout", MODE_PRIVATE) }
+    private val deflock by lazy { Deflock(applicationContext, handler) { refreshUi() } }
 
+    private lateinit var alprBtn: Button
     private lateinit var modeBtn: Button
     private lateinit var sheet: InfoSheet
     private lateinit var startBtn: Button
@@ -98,6 +115,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         cfg.osmdroidBasePath = base
         cfg.osmdroidTileCache = tiles
         setContentView(buildUi())
+        for (s in sightingsFromJson(prefs.getString("sightings", "[]") ?: "[]")) sightings[s.key] = s
     }
 
     override fun onStart() {
@@ -119,6 +137,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     }
 
     override fun onStop() {
+        saveSightings(true)
         if (running) {
             resumeOnStart = true
             stopAll()
@@ -211,6 +230,25 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         }
         root.addView(row(tabSignals, tabMap, centerBtn, modeBtn))
 
+        alprBtn = Button(this).apply {
+            text = "ALPR layer: Off"
+            setOnClickListener {
+                alprOn = !alprOn
+                text = if (alprOn) "ALPR layer: On" else "ALPR layer: Off"
+                if (alprOn) {
+                    showMap(true)
+                    handler.postDelayed({ maybeLoadCameras() }, 400)
+                } else {
+                    refreshUi()
+                }
+            }
+        }
+        val sightBtn = Button(this).apply {
+            text = "Sightings"
+            setOnClickListener { showSightings() }
+        }
+        root.addView(row(alprBtn, sightBtn))
+
         statusText = TextView(this).apply {
             setPadding(dp(12), dp(4), dp(12), dp(4))
             textSize = 12f
@@ -239,6 +277,23 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             controller.setZoom(19.0)
             visibility = View.GONE
         }
+        // load ALPR cameras for wherever the map ends up after a pan or zoom settles
+        map.addMapListener(
+            DelayedMapListener(
+                object : MapListener {
+                    override fun onScroll(event: ScrollEvent?): Boolean {
+                        maybeLoadCameras()
+                        return false
+                    }
+
+                    override fun onZoom(event: ZoomEvent?): Boolean {
+                        maybeLoadCameras()
+                        return false
+                    }
+                },
+                700
+            )
+        )
         val content = FrameLayout(this)
         content.addView(listView, FrameLayout.LayoutParams(-1, -1))
         content.addView(map, FrameLayout.LayoutParams(-1, -1))
@@ -288,6 +343,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         listView.visibility = if (show) View.GONE else View.VISIBLE
         map.visibility = if (show) View.VISIBLE else View.GONE
         refreshUi()
+        if (show) handler.postDelayed({ maybeLoadCameras() }, 400)
     }
 
     private inner class SignalAdapter : BaseAdapter() {
@@ -306,9 +362,17 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             val t = items[position]
             val dist = Rf.modelDistance(t)?.let { fmtDist(it) } ?: "n/a"
             val age = (System.currentTimeMillis() - t.lastSeenMs) / 1000
+            val watch = t.watch
             tv.text = "${signalBars(t.rssiSmooth)}  ${t.name}  [${t.protocol.label}]\n" +
-                "${t.rssi} dBm · ~$dist · ${t.detail}" + (if (age > 5) " · ${age}s ago" else "")
-            tv.setBackgroundColor(if (t.key == selectedKey) 0x33448AFF else Color.TRANSPARENT)
+                "${t.rssi} dBm · ~$dist · ${t.detail}" + (if (age > 5) " · ${age}s ago" else "") +
+                (if (watch != null) "\n⚑ Possible ALPR: ${watch.label}" else "")
+            tv.setBackgroundColor(
+                when {
+                    t.key == selectedKey -> 0x33448AFF
+                    watch != null -> 0x33FF6D00
+                    else -> Color.TRANSPARENT
+                }
+            )
             return tv
         }
     }
@@ -512,6 +576,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             }
         }
 
+        updateSightings(now)
         updateStatus(visible)
         updateTarget()
         if (sheetKey != null) bindSheet()
@@ -537,7 +602,15 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             closeSheet()
             return
         }
-        sheet.bind(t, loc, t.key == selectedKey)
+        val w = t.watch
+        val extra = if (w != null) {
+            "⚑ Possible ALPR signature: ${w.label} (${w.confidence} confidence).\n" +
+                "These patterns are community-reported and can match other devices, so treat this as a lead, not proof.\n" +
+                (sightings[t.key]?.let { "Map check: ${mappedStatus(it)}" } ?: "")
+        } else {
+            null
+        }
+        sheet.bind(t, loc, t.key == selectedKey, extra)
     }
 
     private fun updateStatus(visible: List<Track>) {
@@ -546,8 +619,11 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         }
         val gps = loc?.let { "GPS ±${it.accuracy.roundToInt()} m" } ?: "no GPS fix yet"
         val err = errors.entries.joinToString("; ") { "${it.key.label}: ${it.value}" }
+        val alpr = visible.count { it.watch != null }
         statusText.text = counts + "\n" + gps + " · heading ${headingDeg.roundToInt()}°" +
-            (if (err.isNotEmpty()) "\n⚠ $err" else "")
+            (if (err.isNotEmpty()) "\n⚠ $err" else "") +
+            (if (alpr > 0) "\n⚑ $alpr possible ALPR signature(s) nearby" else "") +
+            (if (alprOn) "\n${deflock.statusLine()} · © OpenStreetMap contributors" else "")
     }
 
     private fun updateTarget() {
@@ -601,6 +677,12 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         paint.color = color
     }
 
+    private fun flagFor(t: Track, selected: Boolean): FlagDrawable {
+        val d = resources.displayMetrics.density
+        return if (t.watch != null) FlagDrawable("ALPR?", 0xFFD32F2F.toInt(), d, selected)
+        else FlagDrawable(t.protocol.tag, t.protocol.color, d, selected)
+    }
+
     private fun updateMap(visible: List<Track>) {
         val ov = map.overlays
         ov.clear()
@@ -609,6 +691,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val onlySel = sel != null && !trackAll
         val density = resources.displayMetrics.density
 
+        // lowest layers first: path, samples, range ring, line to the tracked signal, your accuracy circle
         if (breadcrumb.size > 1) {
             ov.add(Polyline().apply {
                 setPoints(ArrayList(breadcrumb))
@@ -632,6 +715,30 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             }
         }
 
+        // line from you to the selected fix
+        val sf = sel?.fix
+        if (l != null && sf != null) {
+            ov.add(Polyline().apply {
+                setPoints(listOf(GeoPoint(l.latitude, l.longitude), GeoPoint(sf.lat, sf.lon)))
+                outlinePaint.color = 0xFFFF5252.toInt()
+                outlinePaint.strokeWidth = 6f
+            })
+        }
+
+        if (l != null) {
+            ov.add(Polygon().apply {
+                setPoints(Polygon.pointsAsCircle(GeoPoint(l.latitude, l.longitude), max(l.accuracy.toDouble(), 2.0)))
+                fillPaint.color = Color.argb(30, 0, 200, 255)
+                outlinePaint.color = Color.argb(120, 0, 200, 255)
+                outlinePaint.strokeWidth = 1f
+            })
+        }
+
+        // mapped ALPR cameras (OpenStreetMap data, as collected by projects like DeFlock)
+        if (alprOn && deflock.camList.isNotEmpty()) {
+            ov.add(CameraOverlay(deflock.camList, density) { onCameraTap(it) })
+        }
+
         // estimated transmitter positions, one flag per signal. Track: One hides all but the selected signal.
         for (t in visible) {
             if (onlySel && t.key != selectedKey) continue
@@ -639,7 +746,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             ov.add(Marker(map).apply {
                 position = GeoPoint(f.lat, f.lon)
                 setAnchor(FlagDrawable.POLE_ANCHOR_X, Marker.ANCHOR_BOTTOM)
-                icon = FlagDrawable(t.protocol.tag, t.protocol.color, density, t.key == selectedKey)
+                icon = flagFor(t, t.key == selectedKey)
                 setOnMarkerClickListener { _, _ ->
                     openSheet(t.key)
                     true
@@ -655,7 +762,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 ov.add(Marker(map).apply {
                     position = GeoPoint(l.latitude, l.longitude)
                     setAnchor(-0.35f - k * 1.05f, Marker.ANCHOR_BOTTOM)
-                    icon = FlagDrawable(t.protocol.tag, t.protocol.color, density, t.key == selectedKey)
+                    icon = flagFor(t, t.key == selectedKey)
                     setOnMarkerClickListener { _, _ ->
                         openSheet(t.key)
                         true
@@ -664,24 +771,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             }
         }
 
-        // line from you to the selected fix
-        val sf = sel?.fix
-        if (l != null && sf != null) {
-            ov.add(Polyline().apply {
-                setPoints(listOf(GeoPoint(l.latitude, l.longitude), GeoPoint(sf.lat, sf.lon)))
-                outlinePaint.color = 0xFFFF5252.toInt()
-                outlinePaint.strokeWidth = 6f
-            })
-        }
-
         // you
         if (l != null) {
-            ov.add(Polygon().apply {
-                setPoints(Polygon.pointsAsCircle(GeoPoint(l.latitude, l.longitude), max(l.accuracy.toDouble(), 2.0)))
-                fillPaint.color = Color.argb(30, 0, 200, 255)
-                outlinePaint.color = Color.argb(120, 0, 200, 255)
-                outlinePaint.strokeWidth = 1f
-            })
             ov.add(Marker(map).apply {
                 position = GeoPoint(l.latitude, l.longitude)
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -690,5 +781,150 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             })
         }
         map.invalidate()
+    }
+
+    // ------------------------------------------------------------------ ALPR layer + sightings
+
+    /** Fetch camera locations for the part of the map on screen, when the layer is on and zoomed in enough. */
+    private fun maybeLoadCameras() {
+        if (!alprOn || map.visibility != View.VISIBLE || map.width == 0) return
+        if (map.zoomLevelDouble < 14.0) {
+            deflock.setZoomedOut(true)
+        } else {
+            val bb = map.boundingBox
+            deflock.ensureBounds(bb.latSouth, bb.lonWest, bb.latNorth, bb.lonEast)
+        }
+        refreshUi()
+    }
+
+    /** Keep a log of watchlist hits with the best position known for each. */
+    private fun updateSightings(now: Long) {
+        for (t in tracks.values) {
+            val w = t.watch ?: continue
+            val f = t.fix
+            val best = t.samples.maxByOrNull { it.rssi }
+            val l = loc
+            val pos: Triple<Double, Double, String> = when {
+                f != null -> Triple(f.lat, f.lon, "fit")
+                best != null -> Triple(best.lat, best.lon, "strongest reading")
+                l != null -> Triple(l.latitude, l.longitude, "phone position when heard")
+                else -> continue
+            }
+            val old = sightings[t.key]
+            val better = when {
+                old == null -> true
+                sightingRank(pos.third) != sightingRank(old.source) -> sightingRank(pos.third) > sightingRank(old.source)
+                pos.third == "fit" -> Rf.meters(old.lat, old.lon, pos.first, pos.second) > 1.0
+                else -> t.rssiSmooth > old.rssi + 1.0
+            }
+            if (better) {
+                sightings[t.key] = Sighting(
+                    key = t.key, name = t.name, protocol = t.protocol.label, label = w.label,
+                    confidence = w.confidence, lat = pos.first, lon = pos.second, source = pos.third,
+                    rssi = t.rssiSmooth, timeMs = now
+                )
+                sightDirty = true
+                if (old == null && alprOn) deflock.ensureAround(pos.first, pos.second)
+            }
+        }
+        while (sightings.size > 500) sightings.remove(sightings.keys.first())
+        if (sightDirty) saveSightings(false)
+    }
+
+    private fun saveSightings(force: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastSightSave < 5000) return
+        if (!force && !sightDirty) return
+        lastSightSave = now
+        sightDirty = false
+        prefs.edit().putString("sightings", sightingsToJson(sightings.values)).apply()
+    }
+
+    private fun mappedStatus(s: Sighting): String {
+        val n = deflock.nearest(s.lat, s.lon)
+        return when {
+            n != null && n.second <= MAPPED_RADIUS_M -> "near a mapped camera (${n.second.roundToInt()} m away)"
+            deflock.isLoaded(s.lat, s.lon) ->
+                "no mapped camera within ${MAPPED_RADIUS_M.roundToInt()} m, so possibly unmapped"
+            else -> "map data not loaded here (turn on the ALPR layer and view this spot)"
+        }
+    }
+
+    private fun showSightings() {
+        val list = sightings.values.sortedByDescending { it.timeMs }
+        val sb = StringBuilder()
+        if (list.isEmpty()) {
+            sb.append("No possible ALPR signatures logged yet.\n\n")
+            sb.append("A sighting is logged when a Wi-Fi or Bluetooth signal matches a reported camera pattern. ")
+            sb.append("Walk around it to improve the position.")
+        }
+        for (s in list) {
+            sb.append("⚑ ").append(s.name).append("  [").append(s.protocol).append("]\n")
+            sb.append(s.label).append(" (").append(s.confidence).append(" confidence)\n")
+            sb.append(String.format(Locale.US, "%.5f, %.5f", s.lat, s.lon))
+            sb.append(" · from ").append(s.source).append('\n')
+            sb.append("Map check: ").append(mappedStatus(s)).append("\n\n")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Possible ALPR sightings (${list.size})")
+            .setMessage(sb.toString())
+            .setPositiveButton("Share CSV") { _, _ -> shareSightings(list) }
+            .setNeutralButton("DeFlock report") { _, _ -> openUrl("https://deflock.me/report") }
+            .setNegativeButton("Clear list") { _, _ -> confirmClearSightings() }
+            .show()
+    }
+
+    private fun confirmClearSightings() {
+        if (sightings.isEmpty()) return
+        AlertDialog.Builder(this)
+            .setTitle("Clear sightings?")
+            .setMessage("Delete all ${sightings.size} logged sightings from this phone?")
+            .setPositiveButton("Delete") { _, _ ->
+                sightings.clear()
+                sightDirty = true
+                saveSightings(true)
+            }
+            .setNegativeButton("Keep", null)
+            .show()
+    }
+
+    private fun shareSightings(list: List<Sighting>) {
+        if (list.isEmpty()) {
+            toast("Nothing to share yet")
+            return
+        }
+        val text = sightingsToCsv(list) { mappedStatus(it) }
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "RF Scout sightings")
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(send, "Share sightings"))
+    }
+
+    private fun onCameraTap(c: Cam) {
+        val sb = StringBuilder()
+        if (c.manufacturer.isNotBlank()) sb.append("Manufacturer: ").append(c.manufacturer).append('\n')
+        if (c.operator.isNotBlank()) sb.append("Operator: ").append(c.operator).append('\n')
+        c.dirDeg?.let { sb.append("Faces: ").append(it.roundToInt()).append("° (0° = north)\n") }
+        sb.append(String.format(Locale.US, "Position: %.5f, %.5f\n", c.lat, c.lon))
+        sb.append("OpenStreetMap: ").append(c.type).append('/').append(c.id).append("\n\nTags:\n")
+        for ((k, v) in c.tags.entries.take(25)) sb.append(k).append('=').append(v).append('\n')
+        sb.append("\nData © OpenStreetMap contributors (ODbL), collected by volunteers. ")
+        sb.append("It can be incomplete or out of date.")
+        AlertDialog.Builder(this)
+            .setTitle(if (c.manufacturer.isNotBlank()) "${c.manufacturer} ALPR camera" else "ALPR camera")
+            .setMessage(sb.toString())
+            .setPositiveButton("Open in OSM") { _, _ -> openUrl("https://www.openstreetmap.org/${c.type}/${c.id}") }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun openUrl(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: Exception) {
+            toast("No app can open $url")
+        }
     }
 }

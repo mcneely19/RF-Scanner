@@ -63,7 +63,7 @@ internal class InfoSheet(
         return if (s < 90) "${s}s" else "${s / 60}m ${s % 60}s"
     }
 
-    fun bind(t: Track, loc: Location?, tracking: Boolean) {
+    fun bind(t: Track, loc: Location?, tracking: Boolean, extra: String? = null) {
         key = t.key
         title.text = "${t.name}  [${t.protocol.label}]"
         title.setTextColor(t.protocol.color or 0xFF000000.toInt())
@@ -73,6 +73,7 @@ internal class InfoSheet(
 
         val now = System.currentTimeMillis()
         val sb = StringBuilder()
+        if (extra != null) sb.append(extra).append("\n\n")
         if (t.detail.isNotBlank()) sb.append("ID: ").append(t.detail).append('\n')
 
         sb.append("Signal now: ${t.rssi} dBm · average ${"%.0f".format(t.rssiSmooth)} dBm")

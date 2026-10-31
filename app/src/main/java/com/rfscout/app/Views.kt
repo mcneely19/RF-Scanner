@@ -15,7 +15,11 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Overlay
 import kotlin.math.max
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.sin
+import android.view.MotionEvent
 
 /** Arrow that points at the target relative to where the phone is facing (up = straight ahead). */
 internal class ArrowView(context: Context) : View(context) {
@@ -186,5 +190,71 @@ internal class RssiGraphView(context: Context) : View(context) {
         c.drawText("dBm", 2 * d, top + 8 * d, p)
         p.textAlign = Paint.Align.RIGHT
         c.drawText("last ${(span / 1000).toInt()} s", right, h - 4 * d, p)
+    }
+}
+
+/**
+ * All mapped ALPR cameras in one overlay: a red dot, plus a wedge showing the direction the camera
+ * faces when that is tagged. Tapping a dot reports it through [onTap].
+ */
+internal class CameraOverlay(
+    private val cams: List<Cam>,
+    private val density: Float,
+    private val onTap: (Cam) -> Unit
+) : Overlay() {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val pt = Point()
+    private val wedge = Path()
+
+    override fun draw(c: Canvas, mapView: MapView, shadow: Boolean) {
+        if (shadow) return
+        val proj = mapView.projection
+        val w = mapView.width
+        val h = mapView.height
+        val margin = (40 * density).toInt()
+        val len = 30 * density
+        for (cam in cams) {
+            proj.toPixels(GeoPoint(cam.lat, cam.lon), pt)
+            if (pt.x < -margin || pt.y < -margin || pt.x > w + margin || pt.y > h + margin) continue
+            val x = pt.x.toFloat()
+            val y = pt.y.toFloat()
+            val dir = cam.dirDeg
+            if (dir != null) {
+                val a1 = Math.toRadians(dir - 22.0)
+                val a2 = Math.toRadians(dir + 22.0)
+                wedge.reset()
+                wedge.moveTo(x, y)
+                wedge.lineTo(x + len * sin(a1).toFloat(), y - len * cos(a1).toFloat())
+                wedge.lineTo(x + len * sin(a2).toFloat(), y - len * cos(a2).toFloat())
+                wedge.close()
+                p.style = Paint.Style.FILL
+                p.color = 0x66FF5252
+                c.drawPath(wedge, p)
+            }
+            p.style = Paint.Style.FILL
+            p.color = 0xFFB71C1C.toInt()
+            c.drawCircle(x, y, 6 * density, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 1.5f * density
+            p.color = Color.WHITE
+            c.drawCircle(x, y, 6 * density, p)
+        }
+    }
+
+    override fun onSingleTapConfirmed(e: MotionEvent, mapView: MapView): Boolean {
+        val proj = mapView.projection
+        var best: Cam? = null
+        var bestD = 24.0 * density
+        for (cam in cams) {
+            proj.toPixels(GeoPoint(cam.lat, cam.lon), pt)
+            val d = hypot((pt.x - e.x).toDouble(), (pt.y - e.y).toDouble())
+            if (d < bestD) {
+                bestD = d
+                best = cam
+            }
+        }
+        val hit = best ?: return false
+        onTap(hit)
+        return true
     }
 }

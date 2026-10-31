@@ -171,12 +171,13 @@ class BleScanner(private val ctx: Context, private val out: (Reading) -> Unit) :
             ?: "(unnamed)"
         val mfr = rec?.manufacturerSpecificData
         val vendor = if (mfr != null && mfr.size() > 0) "mfr 0x%04X".format(mfr.keyAt(0)) else ""
+        val mfrId = if (mfr != null && mfr.size() > 0) mfr.keyAt(0) else null
         val tx = r.txPower.takeIf { it != BleScanResult.TX_POWER_NOT_PRESENT }
         val addr = r.device.address
         out(
             Reading(
                 key = "ble:$addr", protocol = Protocol.BLE, name = name, rssi = r.rssi,
-                freqMhz = 2440, txPower = tx,
+                freqMhz = 2440, txPower = tx, mfrId = mfrId,
                 detail = listOf(addr, vendor).filter { it.isNotEmpty() }.joinToString(" · ")
             )
         )

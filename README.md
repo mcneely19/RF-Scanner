@@ -52,6 +52,17 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
    frequency, distance guess, position fit, and a Track button. Long-press a list row for the same page.
    Cell towers have no position, so their flags sit in a row beside your dot.
 7. **Help** button: illustrated explanation of how the app works.
+8. **ALPR layer** button: shows license-plate-reader cameras that volunteers have mapped in
+   OpenStreetMap (the data projects like DeFlock collect), loaded through the Overpass API for the
+   part of the map on screen (zoom in to street level). Red dots are cameras; the wedge shows the
+   direction a camera faces when tagged. Tap a dot for its tags. Data is cached for a week.
+   Needs internet. © OpenStreetMap contributors (ODbL).
+9. **Watchlist**: Wi-Fi names (`Flock-…` and a few others) and the Bluetooth company ID `0x09C8`
+   that people have reported on Flock cameras get an orange list row and a red `ALPR?` flag.
+   These patterns are community-reported and unreliable: a hit is a lead, not proof, and many
+   cameras broadcast nothing.
+10. **Sightings** button: log of watchlist hits with the best position known, whether a mapped
+    camera is within 150 m, share as CSV, and a link to the DeFlock report page.
 
 Keep the screen on while scanning. The app stops scanning when it goes to the background and resumes when you return.
 

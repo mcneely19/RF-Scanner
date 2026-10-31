@@ -19,6 +19,7 @@ data class Reading(
     val freqMhz: Int = 0,       // 0 = unknown
     val txPower: Int? = null,   // advertised TX power in dBm, if any
     val detail: String = "",
+    val mfrId: Int? = null,     // Bluetooth company ID from manufacturer data, if advertised
     val timeMs: Long = System.currentTimeMillis()
 )
 
@@ -34,6 +35,8 @@ class Track(val key: String, val protocol: Protocol) {
     var detail = ""
     var freqMhz = 0
     var txPower: Int? = null
+    var mfrId: Int? = null
+    var watch: WatchHit? = null
     var rssi = 0
     var rssiSmooth = 0.0
     var lastSeenMs = 0L
@@ -51,10 +54,12 @@ class Track(val key: String, val protocol: Protocol) {
         if (r.detail.isNotEmpty()) detail = r.detail
         if (r.freqMhz > 0) freqMhz = r.freqMhz
         txPower = r.txPower ?: txPower
+        mfrId = r.mfrId ?: mfrId
         rssi = r.rssi
         rssiSmooth = if (count == 0) r.rssi.toDouble() else 0.35 * r.rssi + 0.65 * rssiSmooth
         lastSeenMs = r.timeMs
         if (firstSeenMs == 0L) firstSeenMs = r.timeMs
+        watch = Watch.match(this)
         if (history.isEmpty() || r.timeMs - history[history.size - 1].t >= 500) {
             history.add(HistPt(r.timeMs, r.rssi))
             if (history.size > MAX_HISTORY) history.removeAt(0)

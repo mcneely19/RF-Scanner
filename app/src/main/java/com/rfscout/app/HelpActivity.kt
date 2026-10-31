@@ -80,6 +80,19 @@ class HelpActivity : Activity() {
                 "Sub-GHz, ADS-B and Zigbee need external radios and are not part of the app yet."
         )
 
+        section(
+            col, "7. ALPR layer and watchlist", AlprDiagram(this),
+            "ALPR layer: turn it on, open the Map and zoom in to street level. The app loads license-plate-reader " +
+                "cameras that volunteers have mapped in OpenStreetMap (the data projects like DeFlock collect). " +
+                "Each red dot is a mapped camera, and the wedge shows which way it faces when that is known. " +
+                "Tap a dot for details. Mapped data can be incomplete or out of date.\n\n" +
+                "Watchlist: signals whose name or Bluetooth company ID match patterns reported on Flock cameras " +
+                "get an orange list row and a red ALPR? flag. These patterns are community-reported, change over " +
+                "time and can match other devices, and many cameras broadcast nothing, so a hit is only a lead.\n\n" +
+                "Sightings: logs each hit with its best position and whether a mapped camera is nearby. " +
+                "You can share the log as CSV or open the DeFlock report page."
+        )
+
         col.addView(TextView(this).apply {
             text = "Tips"
             textSize = 16f
@@ -476,5 +489,45 @@ internal class TableDiagram(ctx: Context) : Diagram(ctx, 170) {
             text(c, r.third, c2, y, 13f, if (r.third == "none") noColor else okColor, Paint.Align.CENTER)
         }
         text(c, "guess = from signal strength, rough.   walk = needs you to walk 10 m+", pad, dp(162f), 11f, head)
+    }
+}
+
+/** Mapped camera dot with its facing wedge, and the red watchlist flag. */
+internal class AlprDiagram(ctx: Context) : Diagram(ctx, 150) {
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        panel(c, RectF(0f, 0f, w, dp(150f)))
+        val pad = dp(12f)
+        val ix = pad + dp(26f)
+        val tx = pad + dp(66f)
+
+        // camera dot with a wedge pointing up-right
+        val cx = ix
+        val cy = dp(52f)
+        val len = dp(30f)
+        val wedge = Path().apply {
+            moveTo(cx, cy)
+            val a1 = Math.toRadians(23.0)
+            val a2 = Math.toRadians(67.0)
+            lineTo(cx + len * sin(a1).toFloat(), cy - len * cos(a1).toFloat())
+            lineTo(cx + len * sin(a2).toFloat(), cy - len * cos(a2).toFloat())
+            close()
+        }
+        p.style = Paint.Style.FILL
+        p.color = 0x66FF5252
+        c.drawPath(wedge, p)
+        dot(c, cx, cy, dp(6f), 0xFFB71C1C.toInt())
+        ring(c, cx, cy, dp(6f), Color.WHITE, 1.5f)
+        text(c, "Mapped camera. The wedge shows the way it faces.", tx, cy + dp(4f), 13f, 0xFFCCCCCC.toInt())
+
+        // watchlist flag
+        val fy = dp(120f)
+        val fd = FlagDrawable("ALPR?", 0xFFD32F2F.toInt(), d, false)
+        val l = (ix - dp(2f)).toInt()
+        val t = (fy - fd.intrinsicHeight).toInt()
+        fd.setBounds(l, t, l + fd.intrinsicWidth, t + fd.intrinsicHeight)
+        fd.draw(c)
+        text(c, "Signal matching a reported pattern.", tx, fy - dp(14f), 13f, 0xFFCCCCCC.toInt())
+        text(c, "A lead, not proof.", tx, fy + dp(2f), 13f, 0xFF9E9E9E.toInt())
     }
 }
