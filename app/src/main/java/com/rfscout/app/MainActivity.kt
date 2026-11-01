@@ -117,6 +117,9 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     private lateinit var countText: TextView
     private lateinit var radar: RadarView
+    private lateinit var radarBox: LinearLayout
+    private lateinit var radarList: ListView
+    private val radarAdapter = RadarRowAdapter()
     private var mode = 0
     private var lastVisible: List<Track> = emptyList()
     private lateinit var modeBtn: Button
@@ -306,10 +309,32 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             }
         }
         radar = RadarView(this) { key ->
+            // tapping a dot selects it and scrolls the list below to its row
             selectedKey = key
-            openSheet(key)
             refreshUi()
-        }.apply { visibility = View.GONE }
+            val idx = radarAdapter.items.indexOfFirst { it.key == key }
+            if (idx >= 0) radarList.smoothScrollToPosition(idx)
+        }
+        radarList = ListView(this).apply {
+            adapter = radarAdapter
+            divider = ColorDrawable(Ui.BORDER)
+            dividerHeight = 1
+            selector = ColorDrawable(Color.TRANSPARENT)
+            setOnItemClickListener { _, _, pos, _ ->
+                selectedKey = radarAdapter.items[pos].key
+                refreshUi()
+            }
+            setOnItemLongClickListener { _, _, pos, _ ->
+                openSheet(radarAdapter.items[pos].key)
+                true
+            }
+        }
+        radarBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(radar, LinearLayout.LayoutParams(-1, 0, 1.15f))
+            addView(radarList, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
         map = MapView(this).apply {
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
@@ -336,7 +361,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         )
         val content = FrameLayout(this)
         content.addView(listView, FrameLayout.LayoutParams(-1, -1))
-        content.addView(radar, FrameLayout.LayoutParams(-1, -1))
+        content.addView(radarBox, FrameLayout.LayoutParams(-1, -1))
         content.addView(map, FrameLayout.LayoutParams(-1, -1))
         sheet = InfoSheet(
             this,
@@ -393,7 +418,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     private fun showMode(m: Int) {
         mode = m
         listView.visibility = if (m == 0) View.VISIBLE else View.GONE
-        radar.visibility = if (m == 1) View.VISIBLE else View.GONE
+        radarBox.visibility = if (m == 1) View.VISIBLE else View.GONE
         map.visibility = if (m == 2) View.VISIBLE else View.GONE
         countText.visibility = if (m == 0) View.VISIBLE else View.GONE
         refreshUi()
@@ -434,6 +459,41 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             refreshUi()
         }
         toast("ALPR layer ${if (alprOn) "on" else "off"}")
+    }
+
+    /** Compact one-line-plus rows under the radar. */
+    private inner class RadarRowAdapter : BaseAdapter() {
+        var items: List<Track> = emptyList()
+
+        override fun getCount() = items.size
+        override fun getItem(position: Int): Any = items[position]
+        override fun getItemId(position: Int) = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val tv = (convertView as? TextView) ?: TextView(this@MainActivity).apply {
+                setPadding(dp(10), dp(6), dp(10), dp(6))
+                textSize = 13f
+                setTextColor(Ui.TEXT)
+            }
+            val t = items[position]
+            val l = loc
+            val f = t.fix
+            val dist = if (f != null && l != null) fmtDist(Rf.meters(l.latitude, l.longitude, f.lat, f.lon))
+            else Rf.modelDistance(t)?.let { "~" + fmtDist(it) } ?: "n/a"
+            val bearing = if (f != null && l != null) " · @${"%.0f".format(Rf.distanceBearing(l.latitude, l.longitude, f.lat, f.lon).second)}°" else ""
+            val flag = if (t.following || t.watch != null) "  ⚠" else ""
+            val sb = SpannableStringBuilder()
+            sb.append("● ")
+            sb.setSpan(ForegroundColorSpan(t.protocol.color or 0xFF000000.toInt()), 0, 1, 0)
+            val st = sb.length
+            sb.append(t.name).append(flag)
+            sb.setSpan(StyleSpan(Typeface.BOLD), st, sb.length, 0)
+            sb.append("\n${t.protocol.label} · ${t.rssi} dBm · $dist$bearing")
+            sb.setSpan(ForegroundColorSpan(Ui.DIM), st + t.name.length + flag.length + 1, sb.length, 0)
+            tv.text = sb
+            tv.setBackgroundColor(if (t.key == selectedKey) Ui.PANEL_HI else Color.TRANSPARENT)
+            return tv
+        }
     }
 
     private inner class SignalAdapter : BaseAdapter() {
@@ -698,7 +758,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         if (now - lastArrowMs > 100) {
             lastArrowMs = now
             updateArrow()
-            if (mode == 1 && !inBackground) updateRadar()
+            if (mode == 1 && !inBackground) updateRadar(false)
         }
     }
 
@@ -779,12 +839,12 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         updateStatus(visible)
         updateTarget()
         if (sheetKey != null) bindSheet()
-        if (mode == 1) updateRadar()
+        if (mode == 1) updateRadar(true)
         if (map.visibility == View.VISIBLE) updateMap(visible)
     }
 
     /** Place each signal on the radar: by fit direction when known, otherwise by distance on the lower arc. */
-    private fun updateRadar() {
+    private fun updateRadar(refreshList: Boolean) {
         val l = loc
         val items = ArrayList<RadarDot>()
         val dists = ArrayList<Double>()
@@ -835,6 +895,13 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         radar.dots = spread
         radar.caption = "$withDir with direction · $unknownN by distance only · range ${fmtDist(radar.rangeM)}"
         radar.invalidate()
+        if (refreshList) {
+            // the list shows every signal; Track: One / All only changes which dots the radar draws
+            radarAdapter.items = ArrayList(lastVisible.take(MAX_ROWS)).also { shown ->
+                selectedKey?.let { k -> tracks[k]?.let { sel -> if (sel in lastVisible && sel !in shown) shown.add(sel) } }
+            }
+            radarAdapter.notifyDataSetChanged()
+        }
     }
 
     /** Look up the serving cell's tower and use it as that cell's position. Neighbors stay signal-only. */
@@ -1194,6 +1261,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             isChecked = trackerAlerts
         }
         box.addView(trackerBox)
+        addWifiThrottleControls(box)
         box.addView(TextView(this).apply {
             text = "Distance calibration\n" +
                 Protocol.values().filter { it != Protocol.CELL }.joinToString("\n") { Calib.describe(it) } +
@@ -1218,6 +1286,66 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private val throttleKey = "wifi_scan_throttle_enabled"
+
+    private fun canWriteSecure() =
+        ContextCompat.checkSelfPermission(this, "android.permission.WRITE_SECURE_SETTINGS") == PackageManager.PERMISSION_GRANTED
+
+    /** Android limits Wi-Fi scans to ~4 per 2 minutes. Developer options can turn that off. */
+    private fun addWifiThrottleControls(box: LinearLayout) {
+        val current = try {
+            Settings.Global.getInt(contentResolver, throttleKey, 1)
+        } catch (_: Exception) {
+            -1
+        }
+        val state = when (current) {
+            1 -> "on (scans are limited)"
+            0 -> "off (continuous scanning allowed)"
+            else -> "unknown"
+        }
+        box.addView(TextView(this).apply {
+            text = "Wi-Fi scan throttling: $state"
+            textSize = 13f
+            setPadding(0, dp(12), 0, 0)
+        })
+        if (canWriteSecure()) {
+            box.addView(CheckBox(this).apply {
+                text = "Throttle Wi-Fi scans (untick for continuous scanning)"
+                textSize = 13f
+                isChecked = current != 0
+                setOnCheckedChangeListener { _, on ->
+                    try {
+                        Settings.Global.putInt(contentResolver, throttleKey, if (on) 1 else 0)
+                        toast("Wi-Fi scan throttling ${if (on) "on" else "off"}")
+                    } catch (ex: Exception) {
+                        toast("Could not change it: ${ex.message}")
+                    }
+                }
+            })
+        } else {
+            box.addView(TextView(this).apply {
+                text = "The app can open Developer options for you. Turn off \"Wi-Fi scan throttling\" under Networking. " +
+                    "To flip it from inside the app instead, grant a one-time permission from a computer:\n" +
+                    "adb shell pm grant com.rfscout.app android.permission.WRITE_SECURE_SETTINGS"
+                textSize = 12f
+            })
+            box.addView(Button(this).apply {
+                text = "Open Developer options"
+                setOnClickListener {
+                    try {
+                        startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+                    } catch (_: Exception) {
+                        toast("Developer options are off. Turn them on: Settings > About phone > Software information > tap Build number 7 times.")
+                        try {
+                            startActivity(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            })
+        }
     }
 
     private fun exportSession() {

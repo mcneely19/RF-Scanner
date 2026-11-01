@@ -102,7 +102,9 @@ class HelpActivity : Activity() {
             setPadding(0, dp(20), 0, dp(4))
         })
         col.addView(body(
-            "• Radar tab: you are the center and up is where the phone points. A filled dot has a direction estimate; " +
+            "• Radar tab: below the radar is a list of every signal. Tap a row to select it, long-press for details; " +
+                "tapping a dot scrolls the list to it.\n" +
+                "• Radar tab: you are the center and up is where the phone points. A filled dot has a direction estimate; " +
                 "a hollow dot on the lower arc has only a distance. Tap a dot for its details. Rings show the range, " +
                 "which rescales to fit.\n" +
                 "• Signal cards: each shows type, strength, vendor, a category guess (from its name and company; it can be wrong) " +
