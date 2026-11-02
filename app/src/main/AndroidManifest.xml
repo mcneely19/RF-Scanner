@@ -23,6 +23,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Indoor mode: step detector (Android treats it as physical activity) -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
     <!-- Optional: only usable if granted over adb; lets Settings flip Wi-Fi scan throttling -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
@@ -34,6 +37,7 @@
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.stepdetector" android:required="false" />
 
     <application
         android:allowBackup="true"

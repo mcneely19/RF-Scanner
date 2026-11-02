@@ -111,6 +111,10 @@ class HelpActivity : Activity() {
                 "which rescales to fit.\n" +
                 "• Signal cards: each shows type, strength, vendor, a category guess (from its name and company; it can be wrong) " +
                 "and first/last seen. The list shows the strongest 50.\n" +
+                "• Indoor mode (More menu): for buildings where GPS fails. The phone counts your steps and uses its gyroscope " +
+                "for heading, so the walk-and-fit works without GPS. Press Reset start point when you begin, hold the phone in front " +
+                "of you, and walk in curves. It drifts over long walks, so reset often. The map, tower lookup and sightings are off " +
+                "indoors because the positions are relative to where you started, not real map positions.\n" +
                 "• Cell tower: add a free OpenCelliD key in Settings. The tower you are connected to then gets a flag, " +
                 "a distance and an arrow. It is a crowd-sourced estimate, often off by hundreds of metres. " +
                 "Neighbor cells only share a physical ID, so they stay signal-only.\n" +

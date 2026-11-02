@@ -121,6 +121,9 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     private lateinit var radarList: ListView
     private val radarAdapter = RadarRowAdapter()
     private var mode = 0
+    private var indoor = false
+    private val indoorTracker = IndoorTracker()
+    private var stepCalibFrom: Int? = null
     private var lastVisible: List<Track> = emptyList()
     private lateinit var modeBtn: Button
     private lateinit var sheet: InfoSheet
@@ -151,6 +154,9 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         alprOn = prefs.getBoolean("alpr_on", false)
         bgScan = prefs.getBoolean("bg_scan", false)
         trackerAlerts = prefs.getBoolean("tracker_alerts", true)
+        indoorTracker.stepLenM = prefs.getFloat("step_len", 0.7f).toDouble()
+        indoor = prefs.getBoolean("indoor", false)
+        if (indoor) loc = indoorTracker.location()
         towers.apiKey = prefs.getString("ocid_key", "") ?: ""
         mine.addAll(prefs.getStringSet("mine", emptySet()) ?: emptySet())
         Calib.fromJson(prefs.getString("calib", "{}") ?: "{}")
@@ -415,7 +421,12 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     }
 
     /** 0 = signal list, 1 = radar, 2 = map */
-    private fun showMode(m: Int) {
+    private fun showMode(requested: Int) {
+        var m = requested
+        if (m == 2 && indoor) {
+            toast("The map is off in indoor mode (positions are not real map positions). Showing the radar.")
+            m = 1
+        }
         mode = m
         listView.visibility = if (m == 0) View.VISIBLE else View.GONE
         radarBox.visibility = if (m == 1) View.VISIBLE else View.GONE
@@ -433,6 +444,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             "Sightings log",
             "Export session (CSV + GPX)",
             "Screen-off scanning: ${if (bgScan) "On" else "Off"}",
+            "Indoor mode (steps, no GPS): ${if (indoor) "On" else "Off"}",
+            "Indoor options (reset start, step length)",
             "Settings"
         )
         AlertDialog.Builder(this)
@@ -443,9 +456,124 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                     1 -> showSightings()
                     2 -> exportSession()
                     3 -> toggleBgScan()
-                    4 -> showSettings()
+                    4 -> toggleIndoor()
+                    5 -> showIndoorOptions()
+                    6 -> showSettings()
                 }
             }
+            .show()
+    }
+
+    // ------------------------------------------------------------------ indoor mode
+
+    private fun toggleIndoor() {
+        if (indoor) {
+            setIndoor(false)
+            return
+        }
+        val sm = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        if (sm.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) == null || sm.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR) == null) {
+            toast("This phone has no step sensor or gyroscope orientation, so indoor mode is not available")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 29 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.ACTIVITY_RECOGNITION), 2)
+            return
+        }
+        setIndoor(true)
+    }
+
+    private fun setIndoor(on: Boolean) {
+        indoor = on
+        prefs.edit().putBoolean("indoor", on).apply()
+        // positions from one source are meaningless in the other, so start clean
+        resetPositions()
+        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        if (running) {
+            if (on) lm.removeUpdates(this) else startLocation(lm)
+            restartSensors()
+        }
+        if (on) {
+            indoorTracker.reset()
+            loc = indoorTracker.location()
+            toast("Indoor mode on. Hold the phone in front of you and walk; press More > Indoor options > Reset start point when you begin.")
+            if (mode == 2) showMode(1)
+        } else {
+            loc = null
+            toast("Indoor mode off. Waiting for a GPS fix.")
+        }
+        refreshUi()
+    }
+
+    /** Forget walk data: it was collected in a different position frame. */
+    private fun resetPositions() {
+        breadcrumb.clear()
+        for (t in tracks.values) {
+            t.samples.clear()
+            t.sampleSeq = 0
+            t.fixSeq = -1
+            t.fix = null
+            t.fixNote = ""
+        }
+    }
+
+    private fun showIndoorOptions() {
+        if (!indoor) {
+            toast("Turn on indoor mode first")
+            return
+        }
+        val items = arrayOf(
+            "Reset start point (clears walk data)",
+            "Step length: short, 0.6 m",
+            "Step length: average, 0.7 m",
+            "Step length: long, 0.8 m",
+            "Calibrate step length: walk 10 m"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Indoor options (now ${"%.2f".format(indoorTracker.stepLenM)} m per step)")
+            .setItems(items) { _, i ->
+                when (i) {
+                    0 -> {
+                        indoorTracker.reset()
+                        resetPositions()
+                        loc = indoorTracker.location()
+                        toast("Start point reset")
+                        refreshUi()
+                    }
+                    1 -> setStepLength(0.6)
+                    2 -> setStepLength(0.7)
+                    3 -> setStepLength(0.8)
+                    4 -> calibrateStepLength()
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun setStepLength(m: Double) {
+        indoorTracker.stepLenM = m
+        prefs.edit().putFloat("step_len", m.toFloat()).apply()
+        toast("Step length ${"%.2f".format(m)} m")
+    }
+
+    private fun calibrateStepLength() {
+        stepCalibFrom = indoorTracker.steps
+        AlertDialog.Builder(this)
+            .setTitle("Walk exactly 10 m")
+            .setMessage("Walk 10 m in a straight line at your normal pace, then tap Done. Steps are counted from now.")
+            .setPositiveButton("Done") { _, _ ->
+                val n = indoorTracker.steps - (stepCalibFrom ?: indoorTracker.steps)
+                stepCalibFrom = null
+                if (n >= 8) {
+                    setStepLength((10.0 / n).coerceIn(0.4, 1.1))
+                } else {
+                    toast("Only $n steps counted. Try again, walking a bit further.")
+                }
+            }
+            .setNegativeButton("Cancel") { _, _ -> stepCalibFrom = null }
+            .setCancelable(false)
             .show()
     }
 
@@ -591,6 +719,11 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 2) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) setIndoor(true)
+            else toast("Indoor mode needs the Physical activity permission to count steps")
+            return
+        }
         if (requestCode != 1) return
         val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
         if (fine == PackageManager.PERMISSION_GRANTED) startAll() else toast("Precise location permission is required")
@@ -606,7 +739,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         running = true
         startBtn.text = "Stop"
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        startLocation(lm)
+        if (!indoor) startLocation(lm)
         startSensors()
         for (p in Protocol.values()) if (protoOn[p] == true) startScanner(p)
         handler.post(uiTick)
@@ -698,6 +831,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     }
 
     override fun onLocationChanged(location: Location) {
+        if (indoor) return              // GPS is not trusted indoors; steps provide the position
         val cur = loc
         // prefer GPS: ignore a network fix while a recent GPS fix exists
         if (cur != null && cur.provider == LocationManager.GPS_PROVIDER &&
@@ -710,7 +844,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             location.altitude.toFloat(), System.currentTimeMillis()
         ).declination
 
-        if (location.accuracy <= 50f) SessionLog.addPath(location.latitude, location.longitude, location.accuracy)
+        if (location.accuracy <= 50f && !indoor) SessionLog.addPath(location.latitude, location.longitude, location.accuracy)
         if (location.accuracy <= 30f) {
             val last = breadcrumb.lastOrNull()
             if (last == null || Rf.meters(last.latitude, last.longitude, location.latitude, location.longitude) >= 2.0) {
@@ -732,13 +866,43 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     private fun startSensors() {
         val sm = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
+        // indoors the heading must not depend on the magnetic compass
+        val type = if (indoor) Sensor.TYPE_GAME_ROTATION_VECTOR else Sensor.TYPE_ROTATION_VECTOR
+        sm.getDefaultSensor(type)?.let {
             sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        }
+        if (indoor) {
+            sm.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)?.let {
+                sm.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST)
+            }
+        }
+    }
+
+    private fun restartSensors() {
+        (getSystemService(Context.SENSOR_SERVICE) as SensorManager).unregisterListener(this)
+        headingX = 1.0
+        headingY = 0.0
+        if (running && !inBackground) startSensors()
+    }
+
+    private fun onStep() {
+        indoorTracker.onStep(headingDeg)
+        loc = indoorTracker.location()
+        val p = GeoPoint(loc!!.latitude, loc!!.longitude)
+        val last = breadcrumb.lastOrNull()
+        if (last == null || Rf.meters(last.latitude, last.longitude, p.latitude, p.longitude) >= 1.5) {
+            breadcrumb.add(p)
+            if (breadcrumb.size > 2000) breadcrumb.removeAt(0)
         }
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type != Sensor.TYPE_ROTATION_VECTOR) return
+        if (event.sensor.type == Sensor.TYPE_STEP_DETECTOR) {
+            if (indoor) onStep()
+            return
+        }
+        val want = if (indoor) Sensor.TYPE_GAME_ROTATION_VECTOR else Sensor.TYPE_ROTATION_VECTOR
+        if (event.sensor.type != want) return
         val rm = FloatArray(9)
         val o = FloatArray(3)
         SensorManager.getRotationMatrixFromVector(rm, event.values)
@@ -749,7 +913,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             SensorManager.remapCoordinateSystem(rm, SensorManager.AXIS_X, SensorManager.AXIS_Z, r2)
             SensorManager.getOrientation(r2, o)
         }
-        val az = Math.toRadians(Math.toDegrees(o[0].toDouble()) + declination)
+        val az = Math.toRadians(Math.toDegrees(o[0].toDouble()) + (if (indoor) 0f else declination))
         headingX = 0.8 * headingX + 0.2 * cos(az)
         headingY = 0.8 * headingY + 0.2 * sin(az)
         headingDeg = (Math.toDegrees(atan2(headingY, headingX)) + 360.0) % 360.0
@@ -772,7 +936,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         t.update(r)
 
         val l = loc
-        SessionLog.addReading(t, l?.latitude, l?.longitude, l?.accuracy ?: 0f)
+        SessionLog.addReading(t, if (indoor) null else l?.latitude, if (indoor) null else l?.longitude, l?.accuracy ?: 0f)
         if (t.trackerKind != null) trackFollow(t, r, gapMs)
 
         if (l == null) return
@@ -795,6 +959,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     private fun refreshUi() {
         val now = System.currentTimeMillis()
+        if (indoor && running) loc = indoorTracker.location()      // keeps the position 'fresh' while standing still
         tracks.values.removeAll { now - it.lastSeenMs > 300_000 && it.key != selectedKey }
         val visible = tracks.values
             .filter { protoOn[it.protocol] == true && now - it.lastSeenMs < 60_000 }
@@ -906,6 +1071,13 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     /** Look up the serving cell's tower and use it as that cell's position. Neighbors stay signal-only. */
     private fun applyTowers(visible: List<Track>) {
+        if (indoor) {
+            for (t in visible) if (t.protocol == Protocol.CELL) {
+                t.fix = null
+                t.towerNote = "Tower position needs GPS (indoor mode is on)."
+            }
+            return
+        }
         for (t in visible) {
             if (t.protocol != Protocol.CELL) continue
             val c = t.cell
@@ -1016,7 +1188,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val counts = Protocol.values().joinToString(" · ") { p ->
             "${p.label.substringBefore(' ')} ${visible.count { it.protocol == p }}"
         }
-        val gps = loc?.let { "GPS ±${it.accuracy.roundToInt()} m" } ?: "no GPS fix yet"
+        val gps = if (indoor) "Indoor: ${indoorTracker.steps} steps · ${indoorTracker.distFromStart().roundToInt()} m from start"
+        else loc?.let { "GPS ±${it.accuracy.roundToInt()} m" } ?: "no GPS fix yet"
         val err = errors.entries.joinToString("; ") { "${it.key.label}: ${it.value}" }
         val alpr = visible.count { it.watch != null }
         val follow = visible.count { it.following }
@@ -1377,6 +1550,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     /** Keep a log of watchlist hits with the best position known for each. */
     private fun updateSightings(now: Long) {
+        if (indoor) return              // indoor positions are not real map positions
         for (t in tracks.values) {
             val w = t.watch ?: continue
             val f = t.fix
