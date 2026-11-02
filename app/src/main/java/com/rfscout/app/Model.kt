@@ -75,6 +75,7 @@ class Track(val key: String, val protocol: Protocol) {
     var sampleSeq = 0           // bumps on every new sample
     var fixSeq = -1             // sampleSeq the current fix was computed from
     var fix: Fix? = null
+    var fixNote = ""            // why there is no fix yet (shown instead of a made-up position)
 
     // cell towers: where the database says the tower is
     var towerNote = ""

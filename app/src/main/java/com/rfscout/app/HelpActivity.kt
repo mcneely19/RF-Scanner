@@ -59,7 +59,9 @@ class HelpActivity : Activity() {
                 "While you walk, the app records signal strength against GPS position and finds the spot " +
                 "that best explains the readings.\n\nWalk at least 10 m. A curve or loop around where you " +
                 "think the signal is works best. A straight line leaves two mirror-image answers, and the " +
-                "app warns you. GPS is best outdoors."
+                "app warns you. GPS is best outdoors.\n\nThe app declines to show a direction when the signal barely changes while you move " +
+                "(it is probably next to you), when the fit disagrees badly with the signal strength, or when GPS is worse than 30 m. " +
+                "It tells you why instead."
         )
         section(
             col, "4. The arrow", ArrowDiagram(this),

@@ -65,10 +65,14 @@ object Rf {
      * through Fix.ambiguous.
      */
     fun locate(t: Track): Fix? {
+        t.fixNote = ""
         if (t.protocol == Protocol.CELL) return null
         val s = t.samples
         val n = s.size
-        if (n < 6) return null
+        if (n < 6) {
+            t.fixNote = "Needs more readings from different spots ($n of 6). Walk around."
+            return null
+        }
         val nExp = pathLossExponent(t.protocol)
 
         val lat0 = s[n - 1].lat
@@ -99,7 +103,17 @@ object Rf {
         val disc = sqrt(max(0.0, tr * tr / 4 - det))
         val major = sqrt(max(0.0, tr / 2 + disc))
         val minor = sqrt(max(0.0, tr / 2 - disc))
-        if (major < 4.0) return null   // hasn't moved enough
+        if (major < 4.0) {
+            t.fixNote = "Walk 10 m or more to get a direction."
+            return null   // hasn't moved enough
+        }
+        // a signal that stays the same while you move says nothing about where it is: any far-away
+        // position then fits "perfectly"
+        val spread = rs.max() - rs.min()
+        if (spread < 6.0) {
+            t.fixNote = "No direction yet: the signal barely changed as you moved (%.0f dB). It is probably right next to you or moving with you.".format(spread)
+            return null
+        }
 
         val stats = DoubleArray(2)     // [mean, variance] of e_i for the last fit() call
         fun fit(px: Double, py: Double) {
@@ -142,10 +156,20 @@ object Rf {
 
         fit(bx, by)
         val rms = sqrt(stats[1])
-        if (rms > 12.0) return null    // data too noisy to trust
+        if (rms > 12.0) {
+            t.fixNote = "No direction yet: the readings are too noisy to fit."
+            return null    // data too noisy to trust
+        }
 
         val lat = lat0 + Math.toDegrees(by / EARTH_R)
         val lon = lon0 + Math.toDegrees(bx / (EARTH_R * cosLat))
+        // the fit must roughly agree with the strength-based distance
+        val model = modelDistance(t)
+        val dFit = sqrt(bx * bx + by * by)
+        if (model != null && dFit > max(5.0 * model, 15.0)) {
+            t.fixNote = "No direction yet: the fit says %s away but the signal strength says about %s. Walk a bigger loop with good GPS.".format(fmtDist(dFit), fmtDist(model))
+            return null
+        }
         return Fix(lat, lon, rms, minor < 2.5)
     }
 }

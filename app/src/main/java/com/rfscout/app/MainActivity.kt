@@ -1059,6 +1059,10 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             sb.append(
                 if (t.protocol == Protocol.CELL) {
                     if (t.towerNote.isNotEmpty()) t.towerNote else "Neighbor cell: signal strength only"
+                } else if (l != null && l.accuracy > 30f) {
+                    "Waiting for better GPS (now ±${l.accuracy.roundToInt()} m, needs 30 m or better)"
+                } else if (t.fixNote.isNotEmpty()) {
+                    t.fixNote
                 } else {
                     "Walk 10 m or more to get a bearing (${t.samples.size} points)"
                 }

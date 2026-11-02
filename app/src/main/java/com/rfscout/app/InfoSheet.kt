@@ -129,7 +129,11 @@ internal class InfoSheet(
             sb.append("\nFit quality: ±${"%.1f".format(f.rmsDb)} dB (lower is better)")
             if (f.ambiguous) sb.append("\nYour path is nearly straight, so the real position could be on the other side. Walk a curve.")
         } else {
-            sb.append("none yet. Walk 10 m or more; ${t.samples.size} sample points so far (needs 6).")
+            sb.append(
+                if (loc != null && loc.accuracy > 30f) "waiting for better GPS (now ±${"%.0f".format(loc.accuracy)} m, needs 30 m or better)."
+                else if (t.fixNote.isNotEmpty()) t.fixNote
+                else "none yet. Walk 10 m or more; ${t.samples.size} sample points so far (needs 6)."
+            )
         }
         sb.append("\nSample points recorded: ${t.samples.size}")
         body.text = sb
