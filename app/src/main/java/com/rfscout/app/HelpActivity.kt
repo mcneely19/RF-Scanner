@@ -111,6 +111,10 @@ class HelpActivity : Activity() {
                 "which rescales to fit.\n" +
                 "• Signal cards: each shows type, strength, vendor, a category guess (from its name and company; it can be wrong) " +
                 "and first/last seen. The list shows the strongest 50.\n" +
+                "• Located only (switch under the radar): the radar shows just signals with a distance and direction. " +
+                "The caption counts the hidden ones and the list below still shows everything. The signal you track always stays.\n" +
+                "• Tags (More menu): every item tracker heard, with time near you and how far you moved from where you first met it. " +
+                "Tap one for details.\n" +
                 "• Indoor mode (More menu): for buildings where GPS fails. The phone counts your steps and uses its gyroscope " +
                 "for heading, so the walk-and-fit works without GPS. Press Reset start point when you begin, hold the phone in front " +
                 "of you, and walk in curves. It drifts over long walks, so reset often. The map, tower lookup and sightings are off " +

@@ -35,6 +35,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.CheckBox
@@ -42,6 +43,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -113,6 +115,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     private var serviceActive = false
     private var inBackground = false
     private var trackerAlerts = true
+    private var locatedOnly = true
+    private lateinit var locatedSwitch: Switch
     private var lastNotifMs = 0L
 
     private lateinit var countText: TextView
@@ -154,6 +158,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         alprOn = prefs.getBoolean("alpr_on", false)
         bgScan = prefs.getBoolean("bg_scan", false)
         trackerAlerts = prefs.getBoolean("tracker_alerts", true)
+        locatedOnly = prefs.getBoolean("located_only", true)
+        locatedSwitch.isChecked = locatedOnly
         indoorTracker.stepLenM = prefs.getFloat("step_len", 0.7f).toDouble()
         indoor = prefs.getBoolean("indoor", false)
         if (indoor) loc = indoorTracker.location()
@@ -335,10 +341,23 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 true
             }
         }
+        locatedSwitch = Switch(this).apply {
+            text = "Located only (hide signals with no direction yet)"
+            textSize = 12f
+            setTextColor(Ui.TEXT)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            isChecked = true
+            setOnCheckedChangeListener { _, on ->
+                locatedOnly = on
+                prefs.edit().putBoolean("located_only", on).apply()
+                if (mode == 1) updateRadar(false)
+            }
+        }
         radarBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
             addView(radar, LinearLayout.LayoutParams(-1, 0, 1.15f))
+            addView(locatedSwitch, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(radarList, LinearLayout.LayoutParams(-1, 0, 1f))
         }
         map = MapView(this).apply {
@@ -446,6 +465,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             "Screen-off scanning: ${if (bgScan) "On" else "Off"}",
             "Indoor mode (steps, no GPS): ${if (indoor) "On" else "Off"}",
             "Indoor options (reset start, step length)",
+            "Tags (item trackers)",
             "Settings"
         )
         AlertDialog.Builder(this)
@@ -458,7 +478,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                     3 -> toggleBgScan()
                     4 -> toggleIndoor()
                     5 -> showIndoorOptions()
-                    6 -> showSettings()
+                    6 -> showTags()
+                    7 -> showSettings()
                 }
             }
             .show()
@@ -1017,6 +1038,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         var unknownIdx = 0
         var unknownN = 0
         var withDir = 0
+        var hiddenN = 0
         for (t in vis) {
             val f = t.fix
             val sel = t.key == selectedKey
@@ -1036,6 +1058,10 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 dists.add(d)
                 withDir++
             } else {
+                if (locatedOnly && !sel) {          // the signal you are tracking always stays on the radar
+                    hiddenN++
+                    continue
+                }
                 val d = Rf.modelDistance(t) ?: continue
                 unknownN++
                 items.add(RadarDot(t.key, t.protocol.color or 0xFF000000.toInt(), d, 0.0, false, sel, alert))
@@ -1058,7 +1084,10 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val steps = doubleArrayOf(10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 20000.0, 100000.0)
         radar.rangeM = steps.firstOrNull { it >= ref } ?: steps.last()
         radar.dots = spread
-        radar.caption = "$withDir with direction · $unknownN by distance only · range ${fmtDist(radar.rangeM)}"
+        radar.caption = "$withDir with direction" +
+            (if (unknownN > 0) " · $unknownN by distance only" else "") +
+            (if (hiddenN > 0) " · $hiddenN not located yet (see list)" else "") +
+            " · range ${fmtDist(radar.rangeM)}"
         radar.invalidate()
         if (refreshList) {
             // the list shows every signal; Track: One / All only changes which dots the radar draws
@@ -1130,6 +1159,62 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 Alerts.trackerAlert(applicationContext, t, minutes, t.maxTravelM.roundToInt())
             }
         }
+    }
+
+    private fun durText(ms: Long): String {
+        val s = (ms / 1000).coerceAtLeast(0)
+        return when {
+            s < 90 -> "${s}s"
+            s < 5400 -> "${s / 60} min"
+            else -> "%.1f h".format(s / 3600.0)
+        }
+    }
+
+    /** Every item tracker heard so far: how long it has been near you and how far you have moved since. */
+    private fun showTags() {
+        val now = System.currentTimeMillis()
+        val list = tracks.values.filter { it.trackerKind != null }
+            .sortedWith(compareByDescending<Track> { it.following }.thenByDescending { it.lastSeenMs })
+        if (list.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Tags (item trackers)")
+                .setMessage("No item trackers heard yet. Start scanning with Bluetooth LE on; AirTags, Tile, SmartTags and similar tags show up here when they are nearby.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+        val rows = ArrayList<CharSequence>()
+        for (t in list) {
+            val since = if (t.hasFirstPos && t.followSinceMs > 0) t.followSinceMs else t.firstSeenMs
+            val dist = Rf.modelDistance(t)?.let { "~" + fmtDist(it) } ?: "n/a"
+            val sb = StringBuilder()
+            sb.append(if (t.following) "⚠ " else "").append(t.trackerKind ?: t.name)
+            if (t.key in mine) sb.append("  (marked yours)")
+            sb.append("\n").append("${t.rssi} dBm · $dist · last heard ${durText(now - t.lastSeenMs)} ago")
+            sb.append("\n").append("Near you for ${durText(t.lastSeenMs - since)}")
+            if (t.hasFirstPos) sb.append(" · you moved up to ${fmtDist(t.maxTravelM)} from where you first met it")
+            else sb.append(" · no GPS fix yet, so no distance travelled")
+            sb.append("\n").append(
+                when {
+                    t.following -> "Possible tracker: stayed with you"
+                    t.key in mine -> "Will not raise alerts"
+                    else -> "Alert after $FOLLOW_MIN min and ${FOLLOW_DIST_M.roundToInt()} m of travel"
+                }
+            )
+            rows.add(sb.toString())
+        }
+        val lv = ListView(this)
+        lv.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, rows)
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("Tags (item trackers): ${list.size}")
+            .setView(lv)
+            .setPositiveButton("Close", null)
+            .create()
+        lv.setOnItemClickListener { _, _, pos, _ ->
+            dlg.dismiss()
+            openSheet(list[pos].key)
+        }
+        dlg.show()
     }
 
     private fun markMine(key: String) {

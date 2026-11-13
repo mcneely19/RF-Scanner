@@ -94,6 +94,27 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
     company, can be wrong) and first/last seen; the list shows the strongest 50. Secondary actions (ALPR layer,
     Sightings, Export, Screen-off, Settings) moved into the **More** menu.
 
+19. **Fix sanity guard**: no position is shown when the signal changed less than 6 dB over the walk, when the fit
+    is more than 5x off the strength-based distance (and over 15 m), when readings are too noisy, or when GPS is
+    worse than 30 m. The target panel and details page say why.
+
+20. **Indoor mode** (More menu): position from step detection plus the gyroscope-based orientation (not the
+    magnetic compass) instead of GPS, for buildings. Fit, arrow and radar work as before in a frame relative to
+    your start point. The map, tower lookup, sightings log and GPX path are off in this mode. Needs the Physical
+    activity permission. Step length is adjustable (0.6 / 0.7 / 0.8 m or a 10 m walk calibration). It drifts, so
+    reset the start point often. Accuracy is untested.
+
+21. **Radar: located only** (switch under the radar, on by default): the radar draws only signals that have a
+    distance and direction. The count of hidden ones is shown in the radar caption, and the list below still shows
+    every signal. The signal you are tracking always stays on the radar. Turn the switch off to see distance-only
+    dots again.
+
+22. **Tags view** (More menu > Tags (item trackers)): lists every item tracker heard (AirTag, Tile, SmartTag and
+    similar) with signal, last heard, how long it has been near you, and how far you have moved from where you first
+    met it. Tags that stayed with you are marked and sorted first. Tap one for its details page. Distance travelled
+    needs a GPS fix and is the farthest you got from the first meeting point, not the total walked. The list is a
+    snapshot taken when you open it.
+
 Without Screen-off scanning, the app stops scanning when it goes to the background and resumes when you return.
 
 ## Known limits
