@@ -458,31 +458,28 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     private fun showMap(show: Boolean) = showMode(if (show) 2 else 0)
 
     private fun showMore() {
-        val items = arrayOf(
-            "ALPR camera layer: ${if (alprOn) "On" else "Off"}",
-            "Sightings log",
-            "Export session (CSV + GPX)",
-            "Screen-off scanning: ${if (bgScan) "On" else "Off"}",
-            "Indoor mode (steps, no GPS): ${if (indoor) "On" else "Off"}",
-            "Indoor options (reset start, step length)",
-            "Tags (item trackers)",
-            "Settings"
-        )
-        AlertDialog.Builder(this)
-            .setTitle("More")
-            .setItems(items) { _, i ->
-                when (i) {
-                    0 -> toggleAlpr()
-                    1 -> showSightings()
-                    2 -> exportSession()
-                    3 -> toggleBgScan()
-                    4 -> toggleIndoor()
-                    5 -> showIndoorOptions()
-                    6 -> showTags()
-                    7 -> showSettings()
-                }
-            }
-            .show()
+        val ctx = this
+        val col = MenuUi.column(ctx)
+        var dlg: android.app.Dialog? = null
+        fun go(action: () -> Unit): () -> Unit = {
+            dlg?.dismiss()
+            action()
+        }
+        col.addView(MenuUi.section(ctx, "Modes"))
+        col.addView(MenuUi.row(ctx, "ALPR camera layer", alprOn, null, go { toggleAlpr() }))
+        col.addView(MenuUi.row(ctx, "Screen-off scanning", bgScan, null, go { toggleBgScan() }))
+        col.addView(MenuUi.row(ctx, "Indoor mode (steps, no GPS)", indoor, null, go { toggleIndoor() }))
+        col.addView(MenuUi.section(ctx, "Data"))
+        col.addView(MenuUi.row(ctx, "Sightings log", null, "${sightings.size}", go { showSightings() }))
+        col.addView(MenuUi.row(ctx, "Tags (item trackers)", null, "${tracks.values.count { it.trackerKind != null }}", go { showTags() }))
+        col.addView(MenuUi.row(ctx, "Export session (CSV + GPX)", null, null, go { exportSession() }))
+        col.addView(MenuUi.section(ctx, "Setup"))
+        col.addView(MenuUi.row(ctx, "Indoor options (reset start, step length)", null, null, go { showIndoorOptions() }))
+        col.addView(MenuUi.row(ctx, "Settings", null, null, go { showSettings() }))
+        col.addView(MenuUi.note(ctx, "${MenuUi.ON} ON   ${MenuUi.OFF} OFF   tap a row to switch it or open it"))
+        val shown = MenuUi.dialog(ctx, "More", col, listOf(MenuUi.button(ctx, "Close") { dlg?.dismiss() }))
+        dlg = shown
+        shown.show()
     }
 
     // ------------------------------------------------------------------ indoor mode
@@ -1503,51 +1500,61 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     }
 
     private fun showSettings() {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), 0)
-        }
-        box.addView(TextView(this).apply {
-            text = "OpenCelliD API key (free at opencellid.org/register). Used to look up where the tower you are connected to stands."
-            textSize = 13f
-        })
-        val keyEdit = EditText(this).apply {
+        val ctx = this
+        val col = MenuUi.column(ctx)
+
+        col.addView(MenuUi.section(ctx, "Cell tower lookup"))
+        col.addView(MenuUi.status(ctx, towers.apiKey.isNotBlank(), if (towers.apiKey.isNotBlank()) "OpenCelliD key set" else "No OpenCelliD key: tower lookup is off"))
+        col.addView(MenuUi.note(ctx, "Free key at opencellid.org/register. Used to look up where the tower you are connected to stands."))
+        val keyEdit = EditText(ctx).apply {
             setText(towers.apiKey)
             hint = "API key"
             isSingleLine = true
+            textSize = 14f
+            setTextColor(Ui.TEXT)
+            setHintTextColor(Ui.DIM)
+            background = Ui.box(resources.displayMetrics.density, Ui.PANEL, Ui.BORDER, 8f)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
         }
-        box.addView(keyEdit)
-        val trackerBox = CheckBox(this).apply {
+        col.addView(keyEdit)
+
+        col.addView(MenuUi.section(ctx, "Alerts"))
+        val trackerSwitch = Switch(ctx).apply {
             text = "Alert when an unknown tag keeps appearing as I move"
             textSize = 13f
+            setTextColor(Ui.TEXT)
             isChecked = trackerAlerts
+            setPadding(dp(4), dp(4), dp(4), dp(4))
         }
-        box.addView(trackerBox)
-        addWifiThrottleControls(box)
-        box.addView(TextView(this).apply {
-            text = "Distance calibration\n" +
-                Protocol.values().filter { it != Protocol.CELL }.joinToString("\n") { Calib.describe(it) } +
-                "\n\nVendor registry: " + Vendors.registryState() +
-                "\nTags marked as yours: ${mine.size}"
-            textSize = 12f
-            setPadding(0, dp(12), 0, 0)
-        })
-        AlertDialog.Builder(this)
-            .setTitle("Settings")
-            .setView(box)
-            .setPositiveButton("Save") { _, _ ->
-                towers.apiKey = keyEdit.text.toString().trim()
-                trackerAlerts = trackerBox.isChecked
-                prefs.edit().putString("ocid_key", towers.apiKey).putBoolean("tracker_alerts", trackerAlerts).apply()
-                refreshUi()
-            }
-            .setNeutralButton("Reset calibration") { _, _ ->
-                Calib.resetAll()
-                saveCalib()
-                refreshUi()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        col.addView(trackerSwitch)
+
+        col.addView(MenuUi.section(ctx, "Wi-Fi scanning"))
+        addWifiThrottleControls(col)
+
+        col.addView(MenuUi.section(ctx, "Status"))
+        col.addView(MenuUi.status(ctx, Vendors.registryState().startsWith("loaded"), "Vendor registry: " + Vendors.registryState()))
+        col.addView(MenuUi.status(ctx, mine.isNotEmpty(), "Tags marked as yours: ${mine.size}"))
+        col.addView(MenuUi.section(ctx, "Distance calibration"))
+        col.addView(MenuUi.note(ctx, Protocol.values().filter { it != Protocol.CELL }.joinToString("\n") { Calib.describe(it) }))
+
+        var dlg: android.app.Dialog? = null
+        val save = MenuUi.button(ctx, "Save", true) {
+            towers.apiKey = keyEdit.text.toString().trim()
+            trackerAlerts = trackerSwitch.isChecked
+            prefs.edit().putString("ocid_key", towers.apiKey).putBoolean("tracker_alerts", trackerAlerts).apply()
+            dlg?.dismiss()
+            refreshUi()
+        }
+        val reset = MenuUi.button(ctx, "Reset calib.") {
+            Calib.resetAll()
+            saveCalib()
+            dlg?.dismiss()
+            refreshUi()
+        }
+        val cancel = MenuUi.button(ctx, "Cancel") { dlg?.dismiss() }
+        val shown = MenuUi.dialog(ctx, "Settings", col, listOf(save, reset, cancel))
+        dlg = shown
+        shown.show()
     }
 
     private val throttleKey = "wifi_scan_throttle_enabled"
@@ -1563,19 +1570,17 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             -1
         }
         val state = when (current) {
-            1 -> "on (scans are limited)"
-            0 -> "off (continuous scanning allowed)"
-            else -> "unknown"
+            1 -> "Throttling is on (scans are limited)"
+            0 -> "Throttling is off (continuous scanning)"
+            else -> "Throttling state unknown"
         }
-        box.addView(TextView(this).apply {
-            text = "Wi-Fi scan throttling: $state"
-            textSize = 13f
-            setPadding(0, dp(12), 0, 0)
-        })
+        box.addView(MenuUi.status(this, current == 0, state))
         if (canWriteSecure()) {
-            box.addView(CheckBox(this).apply {
-                text = "Throttle Wi-Fi scans (untick for continuous scanning)"
+            box.addView(Switch(this).apply {
+                text = "Throttle Wi-Fi scans (turn off for continuous scanning)"
                 textSize = 13f
+                setTextColor(Ui.TEXT)
+                setPadding(dp(4), dp(4), dp(4), dp(4))
                 isChecked = current != 0
                 setOnCheckedChangeListener { _, on ->
                     try {
@@ -1587,23 +1592,18 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 }
             })
         } else {
-            box.addView(TextView(this).apply {
-                text = "The app can open Developer options for you. Turn off \"Wi-Fi scan throttling\" under Networking. " +
+            box.addView(MenuUi.note(this,
+                "The app can open Developer options for you. Turn off \"Wi-Fi scan throttling\" under Networking. " +
                     "To flip it from inside the app instead, grant a one-time permission from a computer:\n" +
-                    "adb shell pm grant com.rfscout.app android.permission.WRITE_SECURE_SETTINGS"
-                textSize = 12f
-            })
-            box.addView(Button(this).apply {
-                text = "Open Developer options"
-                setOnClickListener {
+                    "adb shell pm grant com.rfscout.app android.permission.WRITE_SECURE_SETTINGS"))
+            box.addView(MenuUi.button(this, "Open Developer options") {
+                try {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+                } catch (_: Exception) {
+                    toast("Developer options are off. Turn them on: Settings > About phone > Software information > tap Build number 7 times.")
                     try {
-                        startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+                        startActivity(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
                     } catch (_: Exception) {
-                        toast("Developer options are off. Turn them on: Settings > About phone > Software information > tap Build number 7 times.")
-                        try {
-                            startActivity(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
-                        } catch (_: Exception) {
-                        }
                     }
                 }
             })

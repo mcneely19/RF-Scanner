@@ -115,6 +115,11 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
     needs a GPS fix and is the farthest you got from the first meeting point, not the total walked. The list is a
     snapshot taken when you open it.
 
+23. **Themed menus**: the More menu and Settings now use the app's dark/cyan panels. Switchable items show
+    a filled dot (● ON, cyan outline) or a hollow dot (○ OFF); rows that open something show an arrow. Settings
+    has status lines (● / ○) for the OpenCelliD key, Wi-Fi throttling, the vendor registry and tags marked as yours.
+    Other pop-up dialogs (sightings, indoor options, calibrate) still use the standard Android style.
+
 Without Screen-off scanning, the app stops scanning when it goes to the background and resumes when you return.
 
 ## Known limits

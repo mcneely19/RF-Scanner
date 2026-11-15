@@ -21,6 +21,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # IEEE vendor registry, bundled so Wi-Fi / Bluetooth addresses can be mapped to makers.
+      # If the download fails the app still builds; vendor names from addresses are just skipped.
+      - name: Download IEEE vendor registry
+        run: |
+          mkdir -p app/src/main/assets
+          curl -fsSL --retry 3 -o app/src/main/assets/oui.csv https://standards-oui.ieee.org/oui/oui.csv || rm -f app/src/main/assets/oui.csv
+
       - name: Accept Android SDK licenses
         run: yes | sdkmanager --licenses > /dev/null || true
 
@@ -36,6 +43,7 @@ jobs:
           name: rfscout-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
+      # Tag a release (git tag v0.1.0 && git push --tags) to get the APK as a direct download link
       - name: Attach APK to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
