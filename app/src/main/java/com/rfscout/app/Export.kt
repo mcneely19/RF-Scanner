@@ -90,6 +90,7 @@ object Export {
             val fx = t.fix
             val src = when {
                 fx == null -> ""
+                fx.reported -> "broadcast position (ADS-B)"
                 fx.tower -> "tower database"
                 else -> "walk fit"
             }
@@ -99,7 +100,7 @@ object Export {
                 .append(String.format(Locale.US, "%.0f", t.rssiSmooth)).append(',')
                 .append(Rf.modelDistance(t)?.let { String.format(Locale.US, "%.1f", it) } ?: "").append(',')
                 .append(src).append(',').append(num(fx?.lat ?: Double.NaN)).append(',').append(num(fx?.lon ?: Double.NaN)).append(',')
-                .append(if (fx != null && !fx.tower) String.format(Locale.US, "%.1f", fx.rmsDb) else "").append(',')
+                .append(if (fx != null && !fx.tower && !fx.reported) String.format(Locale.US, "%.1f", fx.rmsDb) else "").append(',')
                 .append(if (fx != null && fx.tower) t.towerRangeM.toString() else "").append(',')
                 .append(t.samples.size).append(',').append(iso(t.firstSeenMs)).append(',').append(iso(t.lastSeenMs)).append(',')
                 .append(csv(t.trackerKind ?: "")).append(',').append(csv(t.watch?.label ?: "")).append(',')
@@ -116,7 +117,7 @@ object Export {
             val fx = t.fix ?: continue
             sb.append(String.format(Locale.US, "<wpt lat=\"%.6f\" lon=\"%.6f\">\n", fx.lat, fx.lon))
             sb.append("  <name>").append(xml("${t.name} [${t.protocol.tag}]")).append("</name>\n")
-            val src = if (fx.tower) "tower database (range ${t.towerRangeM} m)" else "walk fit, ±%.1f dB".format(Locale.US, fx.rmsDb)
+            val src = if (fx.reported) "broadcast position" else if (fx.tower) "tower database (range ${t.towerRangeM} m)" else "walk fit, ±%.1f dB".format(Locale.US, fx.rmsDb)
             sb.append("  <desc>").append(xml("Estimated position, $src. Average ${"%.0f".format(t.rssiSmooth)} dBm."))
                 .append("</desc>\n")
             sb.append("</wpt>\n")

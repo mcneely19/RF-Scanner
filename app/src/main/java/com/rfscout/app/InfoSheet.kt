@@ -123,6 +123,10 @@ internal class InfoSheet(
                 sb.append("not possible by walking (towers are too far). ")
                 sb.append(if (t.towerNote.isNotEmpty()) t.towerNote else "Neighbor cells expose only a physical ID and frequency, so they stay signal-only.")
             }
+        } else if (f != null && f.reported && loc != null) {
+            val (dist, bearing) = Rf.distanceBearing(loc.latitude, loc.longitude, f.lat, f.lon)
+            sb.append("${fmtDist(dist)} away at ${"%.0f".format(bearing)}° (0° = north)")
+            sb.append("\nSource: the aircraft's own ADS-B position report, decoded from your SDR. No walking needed.")
         } else if (f != null && loc != null) {
             val (dist, bearing) = Rf.distanceBearing(loc.latitude, loc.longitude, f.lat, f.lon)
             sb.append("${fmtDist(dist)} away at ${"%.0f".format(bearing)}° (0° = north)")
@@ -139,7 +143,7 @@ internal class InfoSheet(
         body.text = sb
 
         trackBtn.text = if (tracking) "Tracking ✓" else "Track"
-        calBtn.visibility = if (t.protocol == Protocol.CELL) GONE else VISIBLE
+        calBtn.visibility = if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) GONE else VISIBLE
         mineBtn.visibility = if (t.trackerKind != null) VISIBLE else GONE
     }
 

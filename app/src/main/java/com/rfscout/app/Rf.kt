@@ -26,7 +26,7 @@ object Rf {
 
     /** Uncalibrated expected RSSI at 1 m. */
     fun baseRef1m(t: Track): Double? = when (t.protocol) {
-        Protocol.CELL -> null
+        Protocol.CELL, Protocol.ADSB -> null
         // assume ~18 dBm EIRP and free-space loss at 1 m: FSPL = 20log10(f_MHz) - 27.55
         Protocol.WIFI -> if (t.freqMhz > 0) 18.0 - (20 * log10(t.freqMhz.toDouble()) - 27.55) else null
         // BLE / classic: advertised TX power minus ~41 dB at 1 m, else a typical -59 dBm
@@ -66,7 +66,7 @@ object Rf {
      */
     fun locate(t: Track): Fix? {
         t.fixNote = ""
-        if (t.protocol == Protocol.CELL) return null
+        if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) return null
         val s = t.samples
         val n = s.size
         if (n < 6) {

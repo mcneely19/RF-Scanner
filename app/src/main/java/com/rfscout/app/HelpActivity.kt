@@ -72,14 +72,14 @@ class HelpActivity : Activity() {
         section(
             col, "5. Track One and Track All", FlagsDiagram(this),
             "Track: One shows only the signal you selected on the map. Track: All shows every signal that " +
-                "has a position estimate, each as a flag: Wi-Fi blue, BLE purple, BT indigo, Cell orange. " +
+                "has a position estimate, each as a flag: Wi-Fi blue, BLE purple, BT indigo, Cell orange, ADS-B aircraft teal. " +
                 "With nothing selected, all flags are shown either way.\n\nNeighbor cell towers have no position, so " +
                 "their flags sit in a row next to your dot. The tower you are connected to can be placed from a database (see More features)."
         )
         section(
             col, "6. What each type gives you", TableDiagram(this),
             "Cell towers are too far away for a bearing, so you get signal strength only. " +
-                "Sub-GHz, ADS-B and Zigbee need external radios and are not part of the app yet."
+                "Sub-GHz and Zigbee need external radios and are not part of the app yet. Aircraft (ADS-B) work with an RTL-SDR: see Settings."
         )
 
         section(
@@ -500,10 +500,10 @@ internal class FlagsDiagram(ctx: Context) : Diagram(ctx, 110) {
 }
 
 /** What each signal type can give you. */
-internal class TableDiagram(ctx: Context) : Diagram(ctx, 170) {
+internal class TableDiagram(ctx: Context) : Diagram(ctx, 198) {
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
-        panel(c, RectF(0f, 0f, w, dp(170f)))
+        panel(c, RectF(0f, 0f, w, dp(198f)))
         val pad = dp(12f)
         val c1 = w * 0.52f
         val c2 = w * 0.80f
@@ -517,7 +517,8 @@ internal class TableDiagram(ctx: Context) : Diagram(ctx, 170) {
             Triple(Protocol.WIFI, "guess", "walk"),
             Triple(Protocol.BLE, "guess", "walk"),
             Triple(Protocol.BT_CLASSIC, "guess", "walk"),
-            Triple(Protocol.CELL, "none", "none")
+            Triple(Protocol.CELL, "none", "none"),
+            Triple(Protocol.ADSB, "reported", "reported")
         )
         for ((i, r) in rows.withIndex()) {
             val y = dp(56f) + i * dp(28f)

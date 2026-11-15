@@ -83,7 +83,7 @@ private const val ALERT_REPEAT_MS = 30L * 60 * 1000
 class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     private val tracks = LinkedHashMap<String, Track>()
-    private val protoOn = HashMap<Protocol, Boolean>().apply { Protocol.values().forEach { put(it, true) } }
+    private val protoOn = HashMap<Protocol, Boolean>().apply { Protocol.values().forEach { put(it, it != Protocol.ADSB) } }
     private val scanners = HashMap<Protocol, RfScanner>()
     private val errors = HashMap<Protocol, String>()
     private val breadcrumb = ArrayList<GeoPoint>()
@@ -259,7 +259,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                         arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
                         intArrayOf(0xFF2196F3.toInt(), 0xFF9E9E9E.toInt())
                     )
-                    isChecked = true
+                    isChecked = protoOn[p] == true
                     setOnCheckedChangeListener { _, on ->
                         protoOn[p] = on
                         if (running) {
@@ -825,6 +825,16 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 Protocol.BLE -> BleScanner(app, this::onReading)
                 Protocol.BT_CLASSIC -> BtClassicScanner(app, this::onReading)
                 Protocol.CELL -> CellScanner(app, this::onReading)
+                Protocol.ADSB -> SdrAdsbScanner(
+                    prefs.getString("sdr_host", SdrAdsbScanner.DEFAULT_HOST) ?: SdrAdsbScanner.DEFAULT_HOST,
+                    prefs.getInt("sdr_port", SdrAdsbScanner.DEFAULT_PORT),
+                    { loc?.let { it.latitude to it.longitude } },
+                    this::onReading,
+                    { msg ->
+                        if (msg == null) errors.remove(Protocol.ADSB) else errors[Protocol.ADSB] = msg
+                        refreshUi()
+                    }
+                )
             }
         }
         val err = s.start()
@@ -958,7 +968,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         if (t.trackerKind != null) trackFollow(t, r, gapMs)
 
         if (l == null) return
-        if (t.protocol == Protocol.CELL) return
+        if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) return
         if (l.accuracy > 30f || System.currentTimeMillis() - l.time > 10_000) return
         val last = t.samples.lastOrNull()
         if (last == null || Rf.meters(last.lat, last.lon, l.latitude, l.longitude) >= 3.0) {
@@ -988,7 +998,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         selectedKey?.let { k -> tracks[k]?.let { toFit.add(it) } }
         sheetKey?.let { k -> tracks[k]?.let { toFit.add(it) } }
         for (t in toFit) {
-            if (t.protocol == Protocol.CELL) continue
+            if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) continue
             if (t.sampleSeq != t.fixSeq) {
                 t.fixSeq = t.sampleSeq
                 t.fix = Rf.locate(t)
@@ -1302,7 +1312,9 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         if (f != null && l != null) {
             val (d, b) = Rf.distanceBearing(l.latitude, l.longitude, f.lat, f.lon)
             targetBearing = b
-            if (f.tower) {
+            if (f.reported) {
+                sb.append("Reported position: ${fmtDist(d)} @ ${"%.0f".format(b)}°")
+            } else if (f.tower) {
                 sb.append("Tower (database estimate): ${fmtDist(d)} @ ${"%.0f".format(b)}°")
                 if (t.towerRangeM > 0) sb.append(" · range ~${fmtDist(t.towerRangeM.toDouble())}")
             } else {
@@ -1475,8 +1487,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     private fun showCalibrate(key: String) {
         val t = tracks[key] ?: return
-        if (t.protocol == Protocol.CELL) {
-            toast("Cell towers are not calibrated")
+        if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) {
+            toast("${t.protocol.label} signals are not calibrated")
             return
         }
         val names = arrayOf("About 1 m", "About 3 m", "About 5 m", "About 10 m", "About 20 m", "Reset ${t.protocol.label} calibration")
@@ -1518,6 +1530,32 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         }
         col.addView(keyEdit)
 
+        col.addView(MenuUi.section(ctx, "SDR (ADS-B aircraft)"))
+        col.addView(MenuUi.note(ctx, "Tick ADS-B above to show aircraft heard by an RTL-SDR. It connects to an rtl_tcp server: a free SDR driver app on this phone (127.0.0.1, port 1234), or rtl_tcp running on a PC or Raspberry Pi (use its IP address). Use a 1090 MHz antenna."))
+        val sdrHostEdit = EditText(ctx).apply {
+            setText(prefs.getString("sdr_host", SdrAdsbScanner.DEFAULT_HOST) ?: SdrAdsbScanner.DEFAULT_HOST)
+            hint = "rtl_tcp address"
+            isSingleLine = true
+            textSize = 14f
+            setTextColor(Ui.TEXT)
+            setHintTextColor(Ui.DIM)
+            background = Ui.box(resources.displayMetrics.density, Ui.PANEL, Ui.BORDER, 8f)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        col.addView(sdrHostEdit)
+        val sdrPortEdit = EditText(ctx).apply {
+            setText(prefs.getInt("sdr_port", SdrAdsbScanner.DEFAULT_PORT).toString())
+            hint = "port"
+            isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            textSize = 14f
+            setTextColor(Ui.TEXT)
+            setHintTextColor(Ui.DIM)
+            background = Ui.box(resources.displayMetrics.density, Ui.PANEL, Ui.BORDER, 8f)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        col.addView(sdrPortEdit)
+
         col.addView(MenuUi.section(ctx, "Alerts"))
         val trackerSwitch = Switch(ctx).apply {
             text = "Alert when an unknown tag keeps appearing as I move"
@@ -1535,13 +1573,21 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         col.addView(MenuUi.status(ctx, Vendors.registryState().startsWith("loaded"), "Vendor registry: " + Vendors.registryState()))
         col.addView(MenuUi.status(ctx, mine.isNotEmpty(), "Tags marked as yours: ${mine.size}"))
         col.addView(MenuUi.section(ctx, "Distance calibration"))
-        col.addView(MenuUi.note(ctx, Protocol.values().filter { it != Protocol.CELL }.joinToString("\n") { Calib.describe(it) }))
+        col.addView(MenuUi.note(ctx, Protocol.values().filter { it != Protocol.CELL && it != Protocol.ADSB }.joinToString("\n") { Calib.describe(it) }))
 
         var dlg: android.app.Dialog? = null
         val save = MenuUi.button(ctx, "Save", true) {
             towers.apiKey = keyEdit.text.toString().trim()
             trackerAlerts = trackerSwitch.isChecked
             prefs.edit().putString("ocid_key", towers.apiKey).putBoolean("tracker_alerts", trackerAlerts).apply()
+            val newHost = sdrHostEdit.text.toString().trim().ifEmpty { SdrAdsbScanner.DEFAULT_HOST }
+            val newPort = sdrPortEdit.text.toString().trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: SdrAdsbScanner.DEFAULT_PORT
+            if (newHost != prefs.getString("sdr_host", SdrAdsbScanner.DEFAULT_HOST) || newPort != prefs.getInt("sdr_port", SdrAdsbScanner.DEFAULT_PORT)) {
+                prefs.edit().putString("sdr_host", newHost).putInt("sdr_port", newPort).apply()
+                scanners.remove(Protocol.ADSB)?.stop()         // a new scanner picks up the new address
+                errors.remove(Protocol.ADSB)
+                if (running && protoOn[Protocol.ADSB] == true) startScanner(Protocol.ADSB)
+            }
             dlg?.dismiss()
             refreshUi()
         }

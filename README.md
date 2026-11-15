@@ -11,10 +11,11 @@ away each one is, and shows where it probably is on a map with a direction arrow
 | Bluetooth LE | `BluetoothLeScanner` | RSSI path-loss model | walk-and-fit |
 | Bluetooth Classic | discovery (`ACTION_FOUND`) | RSSI path-loss model | walk-and-fit |
 | Cellular (LTE / 5G NR / UMTS / GSM) | `TelephonyManager` cell info | none (towers are km away) | none |
+| ADS-B aircraft (1090 MHz) | external RTL-SDR via an rtl_tcp server | from the aircraft's own position report | from the position report |
 
-Not possible from a normal Android app: sub-GHz (433/868/915 MHz), ADS-B, FM/AM, Zigbee, LoRa,
-and similar. Those need an external radio (RTL-SDR, ESP32, CC1101) talking to the phone over USB or
-Bluetooth. NFC has no signal strength. UWB ranging needs a cooperating UWB peer.
+Not possible from a normal Android app: sub-GHz (433/868/915 MHz), FM/AM, Zigbee, LoRa, and similar.
+Those need an external radio (RTL-SDR, ESP32, CC1101) talking to the phone over USB or Bluetooth.
+ADS-B aircraft are supported through an RTL-SDR (see item 24). NFC has no signal strength. UWB ranging needs a cooperating UWB peer.
 
 ## How distance and direction work
 
@@ -120,6 +121,18 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
     has status lines (● / ○) for the OpenCelliD key, Wi-Fi throttling, the vendor registry and tags marked as yours.
     Other pop-up dialogs (sightings, indoor options, calibrate) still use the standard Android style.
 
+24. **ADS-B aircraft (RTL-SDR)**: tick **ADS-B** (off by default) to show aircraft heard on 1090 MHz. The app
+    connects to an **rtl_tcp** server, the standard way to share an RTL-SDR. On the phone, run a free SDR driver
+    app that serves rtl_tcp on `127.0.0.1:1234` (plug the dongle in with a USB-OTG adapter); or run `rtl_tcp` on a
+    PC or Raspberry Pi and enter its address under **Settings > SDR**. Use a 1090 MHz antenna.
+    Each aircraft is a teal **ADS-B** flag placed from its own broadcast position, so no walking is needed. Name is
+    the callsign when heard, otherwise the ICAO hex code; details show altitude, speed and heading. Positions come
+    from pairs of broadcasts, or from a single broadcast near your own position; anything farther than 500 km from
+    you is dropped. The signal level is relative to full scale, not dBm, and is not calibrated. Only plain ADS-B
+    (DF17/18) is decoded; the tuner gain is fixed at 49.6 dB (`GAIN_TENTHS_DB` in `Sdr.kt`).
+    The decoder (`Adsb.kt`) is plain Kotlin and was checked on a desktop against published example messages
+    and synthetic IQ; the Android side (`Sdr.kt`) has not yet been tested with a real dongle.
+
 Without Screen-off scanning, the app stops scanning when it goes to the background and resumes when you return.
 
 ## Known limits
@@ -134,4 +147,7 @@ Without Screen-off scanning, the app stops scanning when it goes to the backgrou
 
 - Wi-Fi RTT (802.11mc) for real metre-level ranging to supporting access points
 - GNSS satellite signal view
-- External SDR / ESP32 bridge for sub-GHz and 2.4 GHz protocols
+- Marine AIS (161.975 / 162.025 MHz) on the same SDR link
+- Sub-GHz decoding (433/868/915 MHz) on the same SDR link
+- Direct USB access to the RTL-SDR (no driver app), which needs native librtlsdr code
+- ESP32 bridge for 2.4 GHz protocols such as Zigbee

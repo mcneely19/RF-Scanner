@@ -4,7 +4,8 @@ enum class Protocol(val label: String, val color: Int, val tag: String) {
     WIFI("Wi-Fi", 0xFF1E88E5.toInt(), "Wi-Fi"),
     BLE("BLE", 0xFF8E24AA.toInt(), "BLE"),
     BT_CLASSIC("BT Classic", 0xFF3949AB.toInt(), "BT"),
-    CELL("Cellular", 0xFFEF6C00.toInt(), "Cell")
+    CELL("Cellular", 0xFFEF6C00.toInt(), "Cell"),
+    ADSB("ADS-B", 0xFF00897B.toInt(), "ADS-B")      // aircraft heard through an external RTL-SDR
 }
 
 /** One point of the RSSI-over-time history shown on the info page. */
@@ -39,6 +40,8 @@ data class Reading(
     val mfrId: Int? = null,     // Bluetooth company ID from manufacturer data, if advertised
     val tracker: String? = null,// kind of item tracker this advertisement looks like
     val cell: CellIdent? = null,
+    val lat: Double? = null,    // position the emitter itself reported (ADS-B), if any
+    val lon: Double? = null,
     val timeMs: Long = System.currentTimeMillis()
 )
 
@@ -51,7 +54,8 @@ data class Fix(
     val lon: Double,
     val rmsDb: Double,
     val ambiguous: Boolean,
-    val tower: Boolean = false      // true = position taken from a cell tower database, not from walking
+    val tower: Boolean = false,     // true = position taken from a cell tower database, not from walking
+    val reported: Boolean = false   // true = the emitter broadcast its own position (ADS-B)
 )
 
 /** Everything we know about one emitter. */
@@ -98,6 +102,7 @@ class Track(val key: String, val protocol: Protocol) {
         mfrId = r.mfrId ?: mfrId
         trackerKind = r.tracker ?: trackerKind
         cell = r.cell ?: cell
+        if (r.lat != null && r.lon != null) fix = Fix(r.lat, r.lon, 0.0, false, false, true)
         rssi = r.rssi
         rssiSmooth = if (count == 0) r.rssi.toDouble() else 0.35 * r.rssi + 0.65 * rssiSmooth
         lastSeenMs = r.timeMs
