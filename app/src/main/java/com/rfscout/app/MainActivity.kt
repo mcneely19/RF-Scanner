@@ -482,13 +482,13 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             action()
         }
         col.addView(MenuUi.section(ctx, "Modes"))
-        col.addView(MenuUi.row(ctx, "ALPR camera layer", alprOn, null, go { toggleAlpr() }))
-        col.addView(MenuUi.row(ctx, "Screen-off scanning", bgScan, null, go { toggleBgScan() }))
-        col.addView(MenuUi.row(ctx, "Indoor mode (steps, no GPS)", indoor, null, go { toggleIndoor() }))
-        col.addView(MenuUi.row(ctx, "Watchlist alert sound", watchSound, null, go {
+        col.addView(MenuUi.toggle(ctx, "ALPR camera layer", { alprOn }) { toggleAlpr() })
+        col.addView(MenuUi.toggle(ctx, "Screen-off scanning", { bgScan }) { toggleBgScan() })
+        col.addView(MenuUi.toggle(ctx, "Indoor mode (steps, no GPS)", { indoor }) { toggleIndoor() })
+        col.addView(MenuUi.toggle(ctx, "Watchlist alert sound", { watchSound }) {
             watchSound = !watchSound
             prefs.edit().putBoolean("watch_sound", watchSound).apply()
-        }))
+        })
         col.addView(MenuUi.section(ctx, "Data"))
         col.addView(MenuUi.row(ctx, "Sightings log", null, "${sightings.size}", go { showSightings() }))
         col.addView(MenuUi.row(ctx, "My watchlist", null, "${MyWatch.entries.size}", go { showMyWatch() }))

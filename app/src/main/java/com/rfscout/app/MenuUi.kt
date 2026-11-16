@@ -146,4 +146,21 @@ internal object MenuUi {
         })
         return wrap
     }
+
+    /**
+     * An ON/OFF row that stays on screen when tapped: [onToggle] changes the setting, then the row
+     * redraws itself from [isOn] (so a change that was refused or is still pending shows correctly).
+     */
+    fun toggle(ctx: Context, label: String, isOn: () -> Boolean, onToggle: () -> Unit): View {
+        val holder = android.widget.FrameLayout(ctx)
+        fun render() {
+            holder.removeAllViews()
+            holder.addView(row(ctx, label, isOn()) {
+                onToggle()
+                render()
+            })
+        }
+        render()
+        return holder
+    }
 }
