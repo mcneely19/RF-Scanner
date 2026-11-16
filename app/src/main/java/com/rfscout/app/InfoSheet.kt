@@ -15,6 +15,8 @@ internal class InfoSheet(
     private val onTrack: (String) -> Unit,
     private val onCalibrate: (String) -> Unit,
     private val onMine: (String) -> Unit,
+    private val onWatch: (String) -> Unit,
+    private val onMute: (String) -> Unit,
     private val onClose: () -> Unit
 ) : LinearLayout(ctx) {
 
@@ -25,6 +27,8 @@ internal class InfoSheet(
     private val trackBtn = Button(ctx)
     private val calBtn = Button(ctx)
     private val mineBtn = Button(ctx)
+    private val watchBtn = Button(ctx)
+    private val muteBtn = Button(ctx)
     private var key: String? = null
 
     init {
@@ -68,6 +72,15 @@ internal class InfoSheet(
             buttons.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
         }
         addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        watchBtn.setOnClickListener { key?.let(onWatch) }
+        muteBtn.setOnClickListener { key?.let(onMute) }
+        val buttons2 = LinearLayout(ctx).apply { orientation = HORIZONTAL }
+        for (b in listOf(watchBtn, muteBtn)) {
+            Ui.styleButton(ctx, b)
+            buttons2.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
+        }
+        addView(buttons2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
     private fun dp(v: Int): Int = (v * d).toInt()
@@ -145,6 +158,8 @@ internal class InfoSheet(
         trackBtn.text = if (tracking) "Tracking ✓" else "Track"
         calBtn.visibility = if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) GONE else VISIBLE
         mineBtn.visibility = if (t.trackerKind != null) VISIBLE else GONE
+        watchBtn.text = if (t.myHit != null) "Unwatch" else "Watch"
+        muteBtn.text = if (MyWatch.isMuted(t.key)) "Unmute" else "Mute"
     }
 
     private fun cellLines(c: CellIdent): String {

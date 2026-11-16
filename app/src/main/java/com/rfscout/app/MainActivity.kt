@@ -78,6 +78,7 @@ private const val MAX_ROWS = 50
 private const val FOLLOW_MIN = 8L
 private const val FOLLOW_DIST_M = 300.0
 private const val FOLLOW_GAP_MS = 180_000L
+private const val MY_ALERT_REPEAT_MS = 10L * 60 * 1000
 private const val ALERT_REPEAT_MS = 30L * 60 * 1000
 
 class MainActivity : Activity(), SensorEventListener, LocationListener {
@@ -111,6 +112,9 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     private val towers by lazy { Towers(applicationContext, handler) { refreshUi() } }
     private val mine = HashSet<String>()
     private val alertedAt = HashMap<String, Long>()
+    private val myAlertedAt = HashMap<String, Long>()
+    private var watchSound = true
+    private val secrets by lazy { getSharedPreferences("secrets", MODE_PRIVATE) }   // kept out of cloud backups
     private var bgScan = false
     private var serviceActive = false
     private var inBackground = false
@@ -166,6 +170,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         towers.apiKey = prefs.getString("ocid_key", "") ?: ""
         mine.addAll(prefs.getStringSet("mine", emptySet()) ?: emptySet())
         Calib.fromJson(prefs.getString("calib", "{}") ?: "{}")
+        MyWatchStore.load(prefs)
+        watchSound = prefs.getBoolean("watch_sound", true)
         Vendors.init(applicationContext)
         Alerts.ensureChannels(applicationContext)
         deflock.loadStored()                       // saved cameras show immediately, even offline
@@ -284,6 +290,11 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             trackAll = !trackAll
             modeBtn.text = if (trackAll) "Track: All" else "Track: One"
             refreshUi()
+        }.apply {
+            // the label is the longest in the row: keep it on one line (shrinking if needed) and centred
+            maxLines = 1
+            gravity = Gravity.CENTER
+            setAutoSizeTextTypeUniformWithConfiguration(9, 12, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         root.addView(row(tabSignals, tabRadar, tabMap, centerBtn, modeBtn))
 
@@ -396,6 +407,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             },
             onCalibrate = { key -> showCalibrate(key) },
             onMine = { key -> markMine(key) },
+            onWatch = { key -> watchSignal(key) },
+            onMute = { key -> toggleMute(key) },
             onClose = { closeSheet() }
         )
         sheet.visibility = View.GONE
@@ -430,7 +443,10 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     }
 
     private fun row(vararg views: View): LinearLayout {
-        val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val r = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         for (v in views) {
             r.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                 setMargins(dp(2), dp(2), dp(2), dp(2))
@@ -469,8 +485,15 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         col.addView(MenuUi.row(ctx, "ALPR camera layer", alprOn, null, go { toggleAlpr() }))
         col.addView(MenuUi.row(ctx, "Screen-off scanning", bgScan, null, go { toggleBgScan() }))
         col.addView(MenuUi.row(ctx, "Indoor mode (steps, no GPS)", indoor, null, go { toggleIndoor() }))
+        col.addView(MenuUi.row(ctx, "Watchlist alert sound", watchSound, null, go {
+            watchSound = !watchSound
+            prefs.edit().putBoolean("watch_sound", watchSound).apply()
+        }))
         col.addView(MenuUi.section(ctx, "Data"))
         col.addView(MenuUi.row(ctx, "Sightings log", null, "${sightings.size}", go { showSightings() }))
+        col.addView(MenuUi.row(ctx, "My watchlist", null, "${MyWatch.entries.size}", go { showMyWatch() }))
+        col.addView(MenuUi.row(ctx, "Muted signals", null, "${MyWatch.muted.size}", go { showMuted() }))
+        col.addView(MenuUi.row(ctx, "Session debrief", null, null, go { showDebrief() }))
         col.addView(MenuUi.row(ctx, "Tags (item trackers)", null, "${tracks.values.count { it.trackerKind != null }}", go { showTags() }))
         col.addView(MenuUi.row(ctx, "Export session (CSV + GPX)", null, null, go { exportSession() }))
         col.addView(MenuUi.section(ctx, "Setup"))
@@ -627,7 +650,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             val dist = if (f != null && l != null) fmtDist(Rf.meters(l.latitude, l.longitude, f.lat, f.lon))
             else Rf.modelDistance(t)?.let { "~" + fmtDist(it) } ?: "n/a"
             val bearing = if (f != null && l != null) " · @${"%.0f".format(Rf.distanceBearing(l.latitude, l.longitude, f.lat, f.lon).second)}°" else ""
-            val flag = if (t.following || t.watch != null) "  ⚠" else ""
+            val flag = if (t.following || t.watch != null) "  ⚠" else if (t.myHit != null) "  ★" else ""
             val sb = SpannableStringBuilder()
             sb.append("● ")
             sb.setSpan(ForegroundColorSpan(t.protocol.color or 0xFF000000.toInt()), 0, 1, 0)
@@ -962,6 +985,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val t = tracks.getOrPut(r.key) { Track(r.key, r.protocol) }
         val gapMs = if (t.count > 0) r.timeMs - t.lastSeenMs else 0L
         t.update(r)
+        t.myHit?.let { alertMine(t, it, r.timeMs) }
 
         val l = loc
         SessionLog.addReading(t, if (indoor) null else l?.latitude, if (indoor) null else l?.longitude, l?.accuracy ?: 0f)
@@ -1049,7 +1073,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         for (t in vis) {
             val f = t.fix
             val sel = t.key == selectedKey
-            val alert = t.following || t.watch != null
+            val alert = t.following || t.watch != null || t.myHit != null
             if (f != null && l != null) {
                 val (d, b) = Rf.distanceBearing(l.latitude, l.longitude, f.lat, f.lon)
                 var gDist: Double? = null
@@ -1157,7 +1181,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val d = Rf.meters(t.firstLat, t.firstLon, l.latitude, l.longitude)
         if (d > t.maxTravelM) t.maxTravelM = d
         val minutes = (r.timeMs - t.followSinceMs) / 60_000
-        t.following = t.key !in mine && t.maxTravelM >= FOLLOW_DIST_M && minutes >= FOLLOW_MIN
+        t.following = t.key !in mine && !MyWatch.isMuted(t.key) && t.maxTravelM >= FOLLOW_DIST_M && minutes >= FOLLOW_MIN
         if (t.following && trackerAlerts) {
             val last = alertedAt[t.key]
             if (last == null || r.timeMs - last > ALERT_REPEAT_MS) {
@@ -1233,6 +1257,212 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         refreshUi()
     }
 
+    // ------------------------------------------------------------------ my watchlist, mute list, debrief
+
+    private fun saveMyWatch() = MyWatchStore.save(prefs)
+
+    /** Re-evaluate every known signal after the watchlist or mute list changed. */
+    private fun rematchAll() {
+        for (t in tracks.values) {
+            t.watch = if (MyWatch.isMuted(t.key)) null else Watch.match(t)
+            t.myHit = MyWatch.match(t)
+            if (MyWatch.isMuted(t.key)) t.following = false
+        }
+    }
+
+    private fun alertMine(t: Track, e: MyEntry, now: Long) {
+        val last = myAlertedAt[t.key]
+        if (last != null && now - last < MY_ALERT_REPEAT_MS) return
+        myAlertedAt[t.key] = now
+        Alerts.watchAlert(applicationContext, t, e, watchSound)
+    }
+
+    private fun addWatch(pattern: String, note: String) {
+        val p = pattern.trim()
+        if (p.length < MyWatch.MIN_LEN) {
+            toast("Use at least ${MyWatch.MIN_LEN} characters")
+            return
+        }
+        if (MyWatch.entries.any { it.pattern.equals(p, ignoreCase = true) }) {
+            toast("Already on your watchlist")
+            return
+        }
+        MyWatch.entries.add(MyEntry(p, note.trim()))
+        myAlertedAt.clear()
+        saveMyWatch()
+        rematchAll()
+        toast("Watching for \"$p\"")
+        refreshUi()
+    }
+
+    /** Details-page button: remove the entry this signal matches, or choose what to watch for. */
+    private fun watchSignal(key: String) {
+        val t = tracks[key] ?: return
+        val hit = t.myHit
+        if (hit != null) {
+            MyWatch.entries.remove(hit)
+            saveMyWatch()
+            rematchAll()
+            toast("Removed \"${hit.pattern}\" from your watchlist")
+            refreshUi()
+            return
+        }
+        val opts = MyWatch.suggestions(t)
+        if (opts.isEmpty()) {
+            toast("There is nothing stable to watch for on this signal")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Watch for...")
+            .setItems(opts.map { it.first }.toTypedArray()) { _, i -> addWatch(opts[i].second, "") }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun toggleMute(key: String) {
+        val t = tracks[key] ?: return
+        if (MyWatch.isMuted(key)) {
+            MyWatch.muted.remove(key)
+            toast("Unmuted")
+        } else {
+            MyWatch.muted.add(key)
+            alertedAt.remove(key)
+            toast("Muted: no alerts or flags for this signal. (Devices that change their address will look new.)")
+        }
+        saveMyWatch()
+        rematchAll()
+        refreshUi()
+    }
+
+    private fun showMyWatch() {
+        val ctx = this
+        val col = MenuUi.column(ctx)
+        var dlg: android.app.Dialog? = null
+        col.addView(MenuUi.note(ctx, "A signal whose name or address matches an entry gets an amber WATCH flag and a notification. Names match any part of the name; addresses match from the start (aa:bb:cc or a full address). Tap an entry to remove it."))
+        if (MyWatch.entries.isEmpty()) col.addView(MenuUi.note(ctx, "Nothing yet. Add a name fragment, an address or address prefix, or an aircraft callsign, or press Watch on a signal's details page."))
+        for (e in MyWatch.entries.toList()) {
+            col.addView(MenuUi.row(ctx, e.pattern, null, e.note.ifBlank { null }) {
+                MyWatch.entries.remove(e)
+                saveMyWatch()
+                rematchAll()
+                dlg?.dismiss()
+                showMyWatch()
+                refreshUi()
+            })
+        }
+        val add = MenuUi.button(ctx, "Add", true) {
+            dlg?.dismiss()
+            showAddWatch()
+        }
+        val shown = MenuUi.dialog(ctx, "My watchlist", col, listOf(add, MenuUi.button(ctx, "Close") { dlg?.dismiss() }))
+        dlg = shown
+        shown.show()
+    }
+
+    private fun showAddWatch() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), 0)
+        }
+        val pat = EditText(this).apply {
+            hint = "Name, address or prefix (3+ characters)"
+            isSingleLine = true
+        }
+        val note = EditText(this).apply {
+            hint = "Note (optional)"
+            isSingleLine = true
+        }
+        box.addView(pat)
+        box.addView(note)
+        AlertDialog.Builder(this)
+            .setTitle("Add to watchlist")
+            .setView(box)
+            .setPositiveButton("Add") { _, _ -> addWatch(pat.text.toString(), note.text.toString()) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showMuted() {
+        val ctx = this
+        val col = MenuUi.column(ctx)
+        var dlg: android.app.Dialog? = null
+        col.addView(MenuUi.note(ctx, "Muted signals raise no alerts and get no flags. Tap one to unmute it."))
+        if (MyWatch.muted.isEmpty()) col.addView(MenuUi.note(ctx, "Nothing muted. Press Mute on a signal's details page."))
+        for (k in MyWatch.muted.toList()) {
+            val t = tracks[k]
+            col.addView(MenuUi.row(ctx, t?.name ?: k, null, t?.protocol?.label ?: "not in range") {
+                MyWatch.muted.remove(k)
+                saveMyWatch()
+                rematchAll()
+                dlg?.dismiss()
+                showMuted()
+                refreshUi()
+            })
+        }
+        val clear = MenuUi.button(ctx, "Unmute all") {
+            MyWatch.muted.clear()
+            saveMyWatch()
+            rematchAll()
+            dlg?.dismiss()
+            refreshUi()
+        }
+        val shown = MenuUi.dialog(ctx, "Muted signals", col, listOf(clear, MenuUi.button(ctx, "Close") { dlg?.dismiss() }))
+        dlg = shown
+        shown.show()
+    }
+
+    private fun debriefDistance(t: Track): String? {
+        val f = t.fix ?: return null
+        val l = loc ?: return null
+        val (d, b) = Rf.distanceBearing(l.latitude, l.longitude, f.lat, f.lon)
+        return "${fmtDist(d)} @ ${b.roundToInt()}°"
+    }
+
+    private fun showDebrief() {
+        val ctx = this
+        val now = System.currentTimeMillis()
+        val text = Debrief.build(tracks.values, now, this::debriefDistance)
+        val col = MenuUi.column(ctx)
+        var dlg: android.app.Dialog? = null
+        col.addView(MenuUi.note(ctx, text).apply { setTextIsSelectable(true) })
+        val claudeOut = MenuUi.note(ctx, "").apply {
+            visibility = View.GONE
+            setTextIsSelectable(true)
+        }
+        col.addView(claudeOut)
+        val share = MenuUi.button(ctx, "Share") {
+            val i = Intent(Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, "RF Scout debrief")
+                .putExtra(Intent.EXTRA_TEXT, text + (if (claudeOut.visibility == View.VISIBLE) "\n\nClaude's read:\n" + claudeOut.text else ""))
+            startActivity(Intent.createChooser(i, "Share debrief"))
+        }
+        val ask = MenuUi.button(ctx, "Ask Claude") {
+            val key = secrets.getString("claude_key", "") ?: ""
+            if (key.isBlank()) {
+                toast("Add your Claude API key in Settings first")
+            } else if (tracks.isEmpty()) {
+                toast("Nothing to send yet")
+            } else {
+                val outgoing = Debrief.build(tracks.values, System.currentTimeMillis(), this::debriefDistance, maskAddresses = true)
+                AlertDialog.Builder(this)
+                    .setTitle("Send this to Claude?")
+                    .setMessage("This exact text goes to Anthropic's API with a short instruction. It has no GPS coordinates, but it does include signal names.\n\n$outgoing")
+                    .setPositiveButton("Send") { _, _ ->
+                        claudeOut.visibility = View.VISIBLE
+                        claudeOut.text = "Asking Claude..."
+                        ClaudeApi.ask(key, Debrief.claudePrompt(outgoing)) { reply, err ->
+                            claudeOut.text = if (reply != null) "Claude's read:\n$reply" else (err ?: "No answer")
+                        }
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
+        val shown = MenuUi.dialog(ctx, "Session debrief", col, listOf(share, ask, MenuUi.button(ctx, "Close") { dlg?.dismiss() }))
+        dlg = shown
+        shown.show()
+    }
+
     // ------------------------------------------------------------------ info sheet
 
     private fun openSheet(key: String) {
@@ -1266,6 +1496,10 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
                 else "Item tracker: an alert is raised if it stays with you for $FOLLOW_MIN min and ${FOLLOW_DIST_M.roundToInt()} m of travel."
             )
         }
+        t.myHit?.let { e ->
+            parts.add("★ On your watchlist: \"${e.pattern}\"" + (if (e.note.isNotBlank()) " (${e.note})" else "") + ". Tap Unwatch to remove it.")
+        }
+        if (MyWatch.isMuted(t.key)) parts.add("Muted: no alerts or flags for this signal. (Devices that change their address will look new.)")
         if (w != null) {
             parts.add(
                 "⚑ Possible ALPR signature: ${w.label} (${w.confidence} confidence).\n" +
@@ -1284,11 +1518,13 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         else loc?.let { "GPS ±${it.accuracy.roundToInt()} m" } ?: "no GPS fix yet"
         val err = errors.entries.joinToString("; ") { "${it.key.label}: ${it.value}" }
         val alpr = visible.count { it.watch != null }
+        val mineN = visible.count { it.myHit != null }
         val follow = visible.count { it.following }
         statusText.text = counts + "\n" + gps + " · heading ${headingDeg.roundToInt()}°" +
             (if (bgScan) " · screen-off scan on" else "") +
             (if (err.isNotEmpty()) "\n⚠ $err" else "") +
             (if (alpr > 0) "\n⚑ $alpr possible ALPR signature(s) nearby" else "") +
+            (if (mineN > 0) "\n★ $mineN watchlist match(es) in range" else "") +
             (if (follow > 0) "\n⚠ $follow tag(s) may be following you" else "") +
             (if (alprOn) "\n${deflock.statusLine()} · © OpenStreetMap contributors" else "")
     }
@@ -1363,6 +1599,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         return when {
             t.following -> FlagDrawable("TRK?", 0xFFD32F2F.toInt(), d, selected)
             t.watch != null -> FlagDrawable("ALPR?", 0xFFD32F2F.toInt(), d, selected)
+            t.myHit != null -> FlagDrawable("WATCH", 0xFFFFA726.toInt(), d, selected)
             else -> FlagDrawable(t.protocol.tag, t.protocol.color, d, selected)
         }
     }
@@ -1556,6 +1793,21 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         }
         col.addView(sdrPortEdit)
 
+        col.addView(MenuUi.section(ctx, "Claude debrief (optional)"))
+        col.addView(MenuUi.note(ctx, "Paste your own Claude API key to get an \"Ask Claude\" button in the session debrief. Nothing is sent unless you tap it, and you see the exact text first (Wi-Fi/Bluetooth addresses are shortened). The key stays on this phone and is excluded from cloud backups."))
+        val claudeKeyEdit = EditText(ctx).apply {
+            setText(secrets.getString("claude_key", "") ?: "")
+            hint = "Claude API key (optional)"
+            isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            textSize = 14f
+            setTextColor(Ui.TEXT)
+            setHintTextColor(Ui.DIM)
+            background = Ui.box(resources.displayMetrics.density, Ui.PANEL, Ui.BORDER, 8f)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        col.addView(claudeKeyEdit)
+
         col.addView(MenuUi.section(ctx, "Alerts"))
         val trackerSwitch = Switch(ctx).apply {
             text = "Alert when an unknown tag keeps appearing as I move"
@@ -1580,6 +1832,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             towers.apiKey = keyEdit.text.toString().trim()
             trackerAlerts = trackerSwitch.isChecked
             prefs.edit().putString("ocid_key", towers.apiKey).putBoolean("tracker_alerts", trackerAlerts).apply()
+            secrets.edit().putString("claude_key", claudeKeyEdit.text.toString().trim()).apply()
             val newHost = sdrHostEdit.text.toString().trim().ifEmpty { SdrAdsbScanner.DEFAULT_HOST }
             val newPort = sdrPortEdit.text.toString().trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: SdrAdsbScanner.DEFAULT_PORT
             if (newHost != prefs.getString("sdr_host", SdrAdsbScanner.DEFAULT_HOST) || newPort != prefs.getInt("sdr_port", SdrAdsbScanner.DEFAULT_PORT)) {

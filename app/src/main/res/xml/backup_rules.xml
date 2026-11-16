@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- the optional Claude API key must never leave the phone through a cloud backup -->
+    <exclude domain="sharedpref" path="secrets.xml" />
+</full-backup-content>

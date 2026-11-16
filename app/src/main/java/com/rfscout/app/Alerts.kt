@@ -16,6 +16,9 @@ object Alerts {
     const val CH_ALERT = "alerts"
     const val ID_SCAN = 1
     const val ID_ALERT = 2
+    const val CH_WATCH = "watchlist"
+    const val CH_WATCH_QUIET = "watchlist_quiet"
+    const val ID_WATCH_BASE = 100
     const val ACTION_STOP = "com.rfscout.app.STOP"
 
     fun ensureChannels(ctx: Context) {
@@ -28,6 +31,17 @@ object Alerts {
         nm.createNotificationChannel(
             NotificationChannel(CH_ALERT, "Tracker alerts", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Unknown Bluetooth tag that keeps appearing as you move"
+            }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_WATCH, "Watchlist (with sound)", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "A signal on your own watchlist is in range"
+            }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_WATCH_QUIET, "Watchlist (silent)", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "A signal on your own watchlist is in range, without a sound"
+                setSound(null, null)
             }
         )
     }
@@ -58,6 +72,29 @@ object Alerts {
     fun updateScanText(ctx: Context, text: String) {
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(ID_SCAN, scanNotification(ctx, text))
+    }
+
+    /** A signal matching one of your own watchlist entries is in range. */
+    fun watchAlert(ctx: Context, t: Track, e: MyEntry, sound: Boolean) {
+        ensureChannels(ctx)
+        val note = if (e.note.isNotBlank()) " (${e.note})" else ""
+        val n = Notification.Builder(ctx, if (sound) CH_WATCH else CH_WATCH_QUIET)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Watchlist: ${t.name}")
+            .setContentText("${t.protocol.label} signal matching \"${e.pattern}\"$note is in range (${t.rssi} dBm)")
+            .setAutoCancel(true)
+            .setContentIntent(openApp(ctx))
+            .build()
+        try {
+            (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(ID_WATCH_BASE + (t.key.hashCode() and 0x3FF), n)
+        } catch (_: SecurityException) {
+        }
+        try {
+            val v = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (v != null && v.hasVibrator()) v.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 200, 120, 200), -1))
+        } catch (_: Exception) {
+        }
     }
 
     @Suppress("DEPRECATION")

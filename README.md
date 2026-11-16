@@ -133,6 +133,21 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
     The decoder (`Adsb.kt`) is plain Kotlin and was checked on a desktop against published example messages
     and synthetic IQ; the Android side (`Sdr.kt`) has not yet been tested with a real dongle.
 
+25. **Your own watchlist** (More > My watchlist, or **Watch** on a signal's details page): add a name fragment, an
+    address or address prefix (`aa:bb:cc`), or an aircraft callsign / ICAO code. A matching signal gets an amber
+    **WATCH** flag (and a ★ in the list) and a notification, repeated at most every 10 minutes per signal. **Watchlist
+    alert sound** in the More menu switches the notification sound on or off. Bluetooth devices that rotate their
+    address will not keep matching an address entry.
+26. **Mute list** (**Mute** on the details page, or More > Muted signals): a muted signal raises no watchlist, ALPR or
+    tracker alerts and gets no flag. Tap an entry in the list to unmute it.
+27. **Session debrief** (More > Session debrief): a plain summary built on the phone: what needs a look, aircraft,
+    strongest signals and what the category guesses add up to. **Share** sends it as text. Optional: paste your own
+    Claude API key in Settings to get **Ask Claude**; the exact text is shown to you before it is sent, it has no GPS
+    coordinates, and Wi-Fi/Bluetooth addresses are shortened. The key is kept in a separate preferences file that is
+    excluded from cloud backups. Not tested against the live API yet.
+28. **More category guesses**: vehicle makes in a Wi-Fi/Bluetooth name, fleet or telematics gear and public
+    infrastructure are now guessed from names. They are only hints.
+
 Without Screen-off scanning, the app stops scanning when it goes to the background and resumes when you return.
 
 ## Known limits

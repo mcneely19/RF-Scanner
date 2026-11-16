@@ -68,6 +68,7 @@ class Track(val key: String, val protocol: Protocol) {
     var trackerKind: String? = null
     var cell: CellIdent? = null
     var watch: WatchHit? = null
+    var myHit: MyEntry? = null      // entry on your own watchlist this signal matches
     var rssi = 0
     var rssiSmooth = 0.0
     var lastSeenMs = 0L
@@ -107,7 +108,8 @@ class Track(val key: String, val protocol: Protocol) {
         rssiSmooth = if (count == 0) r.rssi.toDouble() else 0.35 * r.rssi + 0.65 * rssiSmooth
         lastSeenMs = r.timeMs
         if (firstSeenMs == 0L) firstSeenMs = r.timeMs
-        watch = Watch.match(this)
+        watch = if (MyWatch.isMuted(key)) null else Watch.match(this)
+        myHit = MyWatch.match(this)
         if (history.isEmpty() || r.timeMs - history[history.size - 1].t >= 500) {
             history.add(HistPt(r.timeMs, r.rssi))
             if (history.size > MAX_HISTORY) history.removeAt(0)
