@@ -156,7 +156,7 @@ internal class InfoSheet(
         body.text = sb
 
         trackBtn.text = if (tracking) "Tracking ✓" else "Track"
-        calBtn.visibility = if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) GONE else VISIBLE
+        calBtn.visibility = if (t.protocol == Protocol.CELL || t.protocol.reported) GONE else VISIBLE
         mineBtn.visibility = if (t.trackerKind != null) VISIBLE else GONE
         watchBtn.text = if (t.myHit != null) "Unwatch" else "Watch"
         muteBtn.text = if (MyWatch.isMuted(t.key)) "Unmute" else "Mute"

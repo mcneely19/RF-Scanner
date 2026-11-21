@@ -147,6 +147,12 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
     excluded from cloud backups. Not tested against the live API yet.
 28. **More category guesses**: vehicle makes in a Wi-Fi/Bluetooth name, fleet or telematics gear and public
     infrastructure are now guessed from names. They are only hints.
+29. **Drone Remote ID** (the "Drone" tick box): decodes ASTM F3411 / ASD-STAN broadcasts over Bluetooth (service data
+    0xFFFA) and Wi-Fi beacons (vendor element FA:0B:BC type 0x0D, needs Android 11+). Shows the drone's own reported
+    position, serial/ID, type, speed, altitude, operator ID and the pilot position (in the detail text). No walk-and-fit
+    is used. Decoder checked against messages made by the reference opendroneid-core-c library. Not receivable on a
+    phone: Wi-Fi NAN action frames (some drones use them). Wi-Fi scans are throttled by Android (about every 10 s or
+    slower), so Bluetooth is the better path. Not field-tested with a real drone yet.
 
 Without Screen-off scanning, the app stops scanning when it goes to the background and resumes when you return.
 

@@ -28,7 +28,7 @@ object MyWatch {
 
     /** The address part of a key like "wifi:aa:bb:cc:dd:ee:ff" or "adsb:4840D6", or null for signals without one. */
     fun addressOf(t: Track): String? = when (t.protocol) {
-        Protocol.WIFI, Protocol.BLE, Protocol.BT_CLASSIC, Protocol.ADSB -> t.key.substringAfter(':', "")
+        Protocol.WIFI, Protocol.BLE, Protocol.BT_CLASSIC, Protocol.ADSB, Protocol.RID -> t.key.substringAfter(':', "")
         else -> null
     }?.takeIf { it.isNotEmpty() }
 

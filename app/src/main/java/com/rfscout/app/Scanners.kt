@@ -46,7 +46,12 @@ fun wifiChannel(freqMhz: Int): Int = when {
 // ---------------------------------------------------------------- Wi-Fi
 
 @Suppress("DEPRECATION")
-class WifiScanner(private val ctx: Context, private val out: (Reading) -> Unit) : RfScanner {
+class WifiScanner(
+    private val ctx: Context,
+    private val ridOn: () -> Boolean,
+    private val out: (Reading) -> Unit
+) : RfScanner {
+    private val rid = RidHub()
     private val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private val handler = Handler(Looper.getMainLooper())
     private val lastTs = HashMap<String, Long>()
@@ -92,6 +97,23 @@ class WifiScanner(private val ctx: Context, private val out: (Reading) -> Unit) 
         }
     }
 
+    /** Vendor-specific information elements of a scan result, re-framed as id/length/payload. */
+    @android.annotation.TargetApi(30)
+    private fun ridBytes(r: android.net.wifi.ScanResult): ByteArray? {
+        val bos = java.io.ByteArrayOutputStream()
+        for (ie in r.informationElements) {
+            if (ie.id != 221) continue
+            val b = ie.bytes.duplicate()
+            val arr = ByteArray(b.remaining())
+            b.get(arr)
+            if (arr.size > 255) continue
+            bos.write(221)
+            bos.write(arr.size)
+            bos.write(arr)
+        }
+        return bos.toByteArray().takeIf { it.isNotEmpty() }
+    }
+
     @SuppressLint("MissingPermission")
     private fun publish() {
         val list = try {
@@ -108,6 +130,16 @@ class WifiScanner(private val ctx: Context, private val out: (Reading) -> Unit) 
             lastTs[bssid] = ts
             val ageMs = bootMs - ts / 1000
             if (ageMs > 30_000) continue
+            if (ridOn() && Build.VERSION.SDK_INT >= 30) {
+                val ies = ridBytes(r)
+                if (ies != null) {
+                    val st = rid.stateFor(bssid)
+                    if (RemoteId.decodeWifiIes(ies, st)) {
+                        out(rid.reading(bssid, st, r.level, r.frequency, "Wi-Fi ch ${wifiChannel(r.frequency)}", now - ageMs.coerceAtLeast(0)))
+                        continue
+                    }
+                }
+            }
             val ssid = r.SSID.orEmpty().ifBlank { "(hidden)" }
             out(
                 Reading(
@@ -123,7 +155,12 @@ class WifiScanner(private val ctx: Context, private val out: (Reading) -> Unit) 
 
 // ---------------------------------------------------------------- Bluetooth LE
 
-class BleScanner(private val ctx: Context, private val out: (Reading) -> Unit) : RfScanner {
+class BleScanner(
+    private val ctx: Context,
+    private val ridOn: () -> Boolean,
+    private val out: (Reading) -> Unit
+) : RfScanner {
+    private val rid = RidHub()
     private val adapter: BluetoothAdapter? =
         (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
     private var scanner: BluetoothLeScanner? = null
@@ -211,6 +248,8 @@ class BleScanner(private val ctx: Context, private val out: (Reading) -> Unit) :
         // Google Find Hub network tags: service data 0xFEAA with frame type 0x40 or 0x41
         list.add(ScanFilter.Builder().setServiceData(Trackers.UUID_GOOGLE, byteArrayOf(0x40), byteArrayOf(-1)).build())
         list.add(ScanFilter.Builder().setServiceData(Trackers.UUID_GOOGLE, byteArrayOf(0x41), byteArrayOf(-1)).build())
+        // Drone Remote ID: service data under 0xFFFA
+        list.add(ScanFilter.Builder().setServiceData(Trackers.UUID_RID, none, none).build())
         // watchlist company ID
         list.add(ScanFilter.Builder().setManufacturerData(Watch.BLE_COMPANY_ID, none, none).build())
         return list
@@ -227,6 +266,16 @@ class BleScanner(private val ctx: Context, private val out: (Reading) -> Unit) :
         val mfrId = if (mfr != null && mfr.size() > 0) mfr.keyAt(0) else null
         val tx = r.txPower.takeIf { it != BleScanResult.TX_POWER_NOT_PRESENT }
         val addr = r.device.address
+        if (ridOn()) {
+            val sd = rec?.getServiceData(Trackers.UUID_RID)
+            if (sd != null) {
+                val st = rid.stateFor(addr)
+                if (RemoteId.decodeBle(sd, st)) {
+                    out(rid.reading(addr, st, r.rssi, 2440, "Bluetooth", System.currentTimeMillis()))
+                    return
+                }
+            }
+        }
         out(
             Reading(
                 key = "ble:$addr", protocol = Protocol.BLE, name = name, rssi = r.rssi,
@@ -247,6 +296,7 @@ object Trackers {
     val UUID_SAMSUNG: ParcelUuid = ParcelUuid.fromString("0000fd5a-0000-1000-8000-00805f9b34fb")
     val UUID_TILE_A: ParcelUuid = ParcelUuid.fromString("0000feed-0000-1000-8000-00805f9b34fb")
     val UUID_TILE_B: ParcelUuid = ParcelUuid.fromString("0000feec-0000-1000-8000-00805f9b34fb")
+    val UUID_RID: ParcelUuid = ParcelUuid.fromString("0000fffa-0000-1000-8000-00805f9b34fb")
     val UUID_GOOGLE: ParcelUuid = ParcelUuid.fromString("0000feaa-0000-1000-8000-00805f9b34fb")
 
     fun kindOf(rec: android.bluetooth.le.ScanRecord?): String? {

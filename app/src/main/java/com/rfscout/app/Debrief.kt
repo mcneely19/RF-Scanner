@@ -62,7 +62,17 @@ object Debrief {
             }
         }
 
-        val others = tracks.filter { it.protocol != Protocol.ADSB }.sortedByDescending { it.rssiSmooth }.take(6)
+        val drones = tracks.filter { it.protocol == Protocol.RID }.sortedByDescending { it.rssiSmooth }
+        if (drones.isNotEmpty()) {
+            sb.append("\nDrones (Remote ID, ${drones.size})\n")
+            for (t in drones.take(8)) {
+                sb.append("• ${t.name}: ${t.detail}")
+                distanceOf(t)?.let { sb.append(", $it") }
+                sb.append("\n")
+            }
+        }
+
+        val others = tracks.filter { it.protocol != Protocol.ADSB && it.protocol != Protocol.RID }.sortedByDescending { it.rssiSmooth }.take(6)
         if (others.isNotEmpty()) {
             sb.append("\nStrongest signals\n")
             for (t in others) {

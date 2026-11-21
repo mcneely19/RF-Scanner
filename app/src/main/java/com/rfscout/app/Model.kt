@@ -5,8 +5,12 @@ enum class Protocol(val label: String, val color: Int, val tag: String) {
     BLE("BLE", 0xFF8E24AA.toInt(), "BLE"),
     BT_CLASSIC("BT Classic", 0xFF3949AB.toInt(), "BT"),
     CELL("Cellular", 0xFFEF6C00.toInt(), "Cell"),
-    ADSB("ADS-B", 0xFF00897B.toInt(), "ADS-B")      // aircraft heard through an external RTL-SDR
+    ADSB("ADS-B", 0xFF00897B.toInt(), "ADS-B"),     // aircraft heard through an external RTL-SDR
+    RID("Drone ID", 0xFFD81B60.toInt(), "RID")     // drones broadcasting ASTM F3411 over BLE / Wi-Fi
 }
+
+/** True for protocols whose transmitters report their own position, so no walk-and-fit is done. */
+val Protocol.reported: Boolean get() = this == Protocol.ADSB || this == Protocol.RID
 
 /** One point of the RSSI-over-time history shown on the info page. */
 class HistPt(val t: Long, val rssi: Int)

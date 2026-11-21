@@ -20,6 +20,7 @@ object Category {
         val n = t.name.lowercase()
         return when (t.protocol) {
             Protocol.ADSB -> "Aircraft (ADS-B broadcast)"
+            Protocol.RID -> "Drone (Remote ID broadcast)"
             Protocol.CELL -> if (t.detail.startsWith("serving")) "Cell tower you are connected to" else "Neighbor cell tower"
             Protocol.WIFI -> when {
                 n == "(hidden)" -> "Hidden network"

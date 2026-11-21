@@ -518,7 +518,8 @@ internal class TableDiagram(ctx: Context) : Diagram(ctx, 198) {
             Triple(Protocol.BLE, "guess", "walk"),
             Triple(Protocol.BT_CLASSIC, "guess", "walk"),
             Triple(Protocol.CELL, "none", "none"),
-            Triple(Protocol.ADSB, "reported", "reported")
+            Triple(Protocol.ADSB, "reported", "reported"),
+            Triple(Protocol.RID, "reported", "reported")
         )
         for ((i, r) in rows.withIndex()) {
             val y = dp(56f) + i * dp(28f)

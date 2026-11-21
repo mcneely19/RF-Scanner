@@ -844,8 +844,12 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val app = applicationContext
         val s = scanners.getOrPut(p) {
             when (p) {
-                Protocol.WIFI -> WifiScanner(app, this::onReading)
-                Protocol.BLE -> BleScanner(app, this::onReading)
+                Protocol.WIFI -> WifiScanner(app, { protoOn[Protocol.RID] != false }, this::onReading)
+                Protocol.BLE -> BleScanner(app, { protoOn[Protocol.RID] != false }, this::onReading)
+                Protocol.RID -> object : RfScanner {      // Remote ID rides on the Wi-Fi and BLE scanners
+                    override fun start(): String? = null
+                    override fun stop() {}
+                }
                 Protocol.BT_CLASSIC -> BtClassicScanner(app, this::onReading)
                 Protocol.CELL -> CellScanner(app, this::onReading)
                 Protocol.ADSB -> SdrAdsbScanner(
@@ -992,7 +996,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         if (t.trackerKind != null) trackFollow(t, r, gapMs)
 
         if (l == null) return
-        if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) return
+        if (t.protocol == Protocol.CELL || t.protocol.reported) return
         if (l.accuracy > 30f || System.currentTimeMillis() - l.time > 10_000) return
         val last = t.samples.lastOrNull()
         if (last == null || Rf.meters(last.lat, last.lon, l.latitude, l.longitude) >= 3.0) {
@@ -1022,7 +1026,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         selectedKey?.let { k -> tracks[k]?.let { toFit.add(it) } }
         sheetKey?.let { k -> tracks[k]?.let { toFit.add(it) } }
         for (t in toFit) {
-            if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) continue
+            if (t.protocol == Protocol.CELL || t.protocol.reported) continue
             if (t.sampleSeq != t.fixSeq) {
                 t.fixSeq = t.sampleSeq
                 t.fix = Rf.locate(t)
@@ -1724,7 +1728,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     private fun showCalibrate(key: String) {
         val t = tracks[key] ?: return
-        if (t.protocol == Protocol.CELL || t.protocol == Protocol.ADSB) {
+        if (t.protocol == Protocol.CELL || t.protocol.reported) {
             toast("${t.protocol.label} signals are not calibrated")
             return
         }
@@ -1825,7 +1829,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         col.addView(MenuUi.status(ctx, Vendors.registryState().startsWith("loaded"), "Vendor registry: " + Vendors.registryState()))
         col.addView(MenuUi.status(ctx, mine.isNotEmpty(), "Tags marked as yours: ${mine.size}"))
         col.addView(MenuUi.section(ctx, "Distance calibration"))
-        col.addView(MenuUi.note(ctx, Protocol.values().filter { it != Protocol.CELL && it != Protocol.ADSB }.joinToString("\n") { Calib.describe(it) }))
+        col.addView(MenuUi.note(ctx, Protocol.values().filter { it != Protocol.CELL && !it.reported }.joinToString("\n") { Calib.describe(it) }))
 
         var dlg: android.app.Dialog? = null
         val save = MenuUi.button(ctx, "Save", true) {
