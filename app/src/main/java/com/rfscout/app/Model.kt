@@ -4,7 +4,7 @@ enum class Protocol(val label: String, val color: Int, val tag: String) {
     WIFI("Wi-Fi", 0xFF1E88E5.toInt(), "Wi-Fi"),
     BLE("BLE", 0xFF8E24AA.toInt(), "BLE"),
     BT_CLASSIC("BT Classic", 0xFF3949AB.toInt(), "BT"),
-    CELL("Cellular", 0xFFEF6C00.toInt(), "Cell"),
+    CELL("Cell", 0xFFEF6C00.toInt(), "Cell"),
     ADSB("ADS-B", 0xFF00897B.toInt(), "ADS-B"),     // aircraft heard through an external RTL-SDR
     RID("Drone ID", 0xFFD81B60.toInt(), "RID")     // drones broadcasting ASTM F3411 over BLE / Wi-Fi
 }

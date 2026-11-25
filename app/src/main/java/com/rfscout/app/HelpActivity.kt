@@ -493,7 +493,7 @@ internal class FlagsDiagram(ctx: Context) : Diagram(ctx, 110) {
         for ((i, pr) in protos.withIndex()) {
             val x = colW * i + colW / 2 - dp(20f)
             flag(c, x, dp(50f), pr)
-            text(c, pr.label, colW * i + colW / 2, dp(78f), 12f, 0xFFCCCCCC.toInt(), Paint.Align.CENTER)
+            text(c, pr.tag, colW * i + colW / 2, dp(78f), 12f, 0xFFCCCCCC.toInt(), Paint.Align.CENTER)
         }
         text(c, "Tap a flag for its details page", w / 2, dp(100f), 12f, 0xFF9E9E9E.toInt(), Paint.Align.CENTER)
     }

@@ -162,6 +162,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         for (s in sightingsFromJson(prefs.getString("sightings", "[]") ?: "[]")) sightings[s.key] = s
 
         // settings that persist between runs
+        for (p in Protocol.values()) protoOn[p] = prefs.getBoolean("proto_${p.name}", p != Protocol.ADSB)
         alprOn = prefs.getBoolean("alpr_on", false)
         bgScan = prefs.getBoolean("bg_scan", false)
         trackerAlerts = prefs.getBoolean("tracker_alerts", true)
@@ -255,32 +256,6 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val helpBtn = styled("Help") { startActivity(Intent(this@MainActivity, HelpActivity::class.java)) }
         val moreBtn = styled("More") { showMore() }
         root.addView(row(startBtn, clearBtn, helpBtn, moreBtn))
-
-        // protocol toggles
-        val toggles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for (p in Protocol.values()) {
-            toggles.addView(
-                CheckBox(this).apply {
-                    text = p.label.substringBefore(' ')
-                    textSize = 12f
-                    setTextColor(Ui.TEXT)
-                    // blue when ticked, grey when not
-                    buttonTintList = ColorStateList(
-                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                        intArrayOf(0xFF2196F3.toInt(), 0xFF9E9E9E.toInt())
-                    )
-                    isChecked = protoOn[p] == true
-                    setOnCheckedChangeListener { _, on ->
-                        protoOn[p] = on
-                        if (running) {
-                            if (on) startScanner(p) else scanners[p]?.stop()
-                        }
-                    }
-                },
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            )
-        }
-        root.addView(toggles)
 
         // tabs
         val tabSignals = styled("Signals") { showMode(0) }
@@ -1567,17 +1542,17 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     }
 
     private fun updateStatus(visible: List<Track>) {
-        val counts = Protocol.values().joinToString(" · ") { p ->
-            "${p.label.substringBefore(' ')} ${visible.count { it.protocol == p }}"
-        }
+        val counts = Protocol.values().filter { protoOn[it] == true }.joinToString(" · ") { p ->
+            "${p.tag} ${visible.count { it.protocol == p }}"
+        }.ifEmpty { "All signal types are off (Settings > Signals shown)" }
         val gps = if (indoor) "Indoor: ${indoorTracker.steps} steps · ${indoorTracker.distFromStart().roundToInt()} m from start"
         else loc?.let { "GPS ±${it.accuracy.roundToInt()} m" } ?: "no GPS fix yet"
         val err = errors.entries.joinToString("; ") { "${it.key.label}: ${it.value}" }
         val alpr = visible.count { it.watch != null }
         val mineN = visible.count { it.myHit != null }
         val follow = visible.count { it.following }
-        statusText.text = counts + "\n" + gps + " · heading ${headingDeg.roundToInt()}°" +
-            (if (bgScan) " · screen-off scan on" else "") +
+        statusText.text = counts + "\n" + gps + " · hdg ${headingDeg.roundToInt()}°" +
+            (if (bgScan) " · screen-off" else "") +
             (if (err.isNotEmpty()) "\n⚠ $err" else "") +
             (if (gate.safeMode) "\n⚠ Very busy: safe mode is thinning readings" else "") +
             (if (alpr > 0) "\n⚑ $alpr possible ALPR signature(s) nearby" else "") +
@@ -1805,9 +1780,29 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             .show()
     }
 
+    private fun setProto(p: Protocol, on: Boolean) {
+        protoOn[p] = on
+        prefs.edit().putBoolean("proto_${p.name}", on).apply()
+        if (on) {
+            if (running) startScanner(p)
+        } else {
+            scanners[p]?.stop()
+            errors.remove(p)
+            if (selectedKey?.let { tracks[it]?.protocol } == p) selectedKey = null
+        }
+        refreshUi()
+    }
+
     private fun showSettings() {
         val ctx = this
         val col = MenuUi.column(ctx)
+
+        col.addView(MenuUi.section(ctx, "Signals shown"))
+        col.addView(MenuUi.note(ctx, "Turn a signal type off to stop scanning for it and hide it from the list, radar and map. Drone ID is read through the Wi-Fi and Bluetooth scanners, so it needs one of them on. ADS-B needs an RTL-SDR."))
+        for (p in Protocol.values()) {
+            col.addView(MenuUi.toggle(ctx, p.label, { protoOn[p] == true }) { setProto(p, protoOn[p] != true) })
+        }
+
 
         col.addView(MenuUi.section(ctx, "Cell tower lookup"))
         col.addView(MenuUi.status(ctx, towers.apiKey.isNotBlank(), if (towers.apiKey.isNotBlank()) "OpenCelliD key set" else "No OpenCelliD key: tower lookup is off"))
