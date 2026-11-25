@@ -85,6 +85,8 @@ private const val MAX_TRACKS = 1500
 class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     private val tracks = LinkedHashMap<String, Track>()
+    private val protoShown = HashMap<Protocol, Boolean>().apply { Protocol.values().forEach { put(it, true) } }
+    private val protoBoxes = HashMap<Protocol, CheckBox>()
     private val protoOn = HashMap<Protocol, Boolean>().apply { Protocol.values().forEach { put(it, it != Protocol.ADSB) } }
     private val scanners = HashMap<Protocol, RfScanner>()
     private val errors = HashMap<Protocol, String>()
@@ -162,7 +164,10 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         for (s in sightingsFromJson(prefs.getString("sightings", "[]") ?: "[]")) sightings[s.key] = s
 
         // settings that persist between runs
-        for (p in Protocol.values()) protoOn[p] = prefs.getBoolean("proto_${p.name}", p != Protocol.ADSB)
+        for (p in Protocol.values()) {
+            protoShown[p] = prefs.getBoolean("proto_shown_${p.name}", true)
+            protoOn[p] = protoShown[p] == true && prefs.getBoolean("proto_${p.name}", p != Protocol.ADSB)
+        }
         alprOn = prefs.getBoolean("alpr_on", false)
         bgScan = prefs.getBoolean("bg_scan", false)
         trackerAlerts = prefs.getBoolean("tracker_alerts", true)
@@ -256,6 +261,30 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val helpBtn = styled("Help") { startActivity(Intent(this@MainActivity, HelpActivity::class.java)) }
         val moreBtn = styled("More") { showMore() }
         root.addView(row(startBtn, clearBtn, helpBtn, moreBtn))
+
+        // protocol tick boxes (each can be hidden from Settings > Signal tick boxes)
+        val toggles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for (p in Protocol.values()) {
+            val box = CheckBox(this).apply {
+                text = shortName(p)
+                textSize = 11f
+                maxLines = 1
+                setPadding(0, 0, 0, 0)
+                setAutoSizeTextTypeUniformWithConfiguration(8, 11, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+                setTextColor(Ui.TEXT)
+                // blue when ticked, grey when not
+                buttonTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(0xFF2196F3.toInt(), 0xFF9E9E9E.toInt())
+                )
+                isChecked = protoOn[p] == true
+                visibility = if (protoShown[p] == true) View.VISIBLE else View.GONE
+                setOnCheckedChangeListener { _, on -> setProto(p, on) }
+            }
+            protoBoxes[p] = box
+            toggles.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        root.addView(toggles)
 
         // tabs
         val tabSignals = styled("Signals") { showMode(0) }
@@ -1543,8 +1572,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     private fun updateStatus(visible: List<Track>) {
         val counts = Protocol.values().filter { protoOn[it] == true }.joinToString(" · ") { p ->
-            "${p.tag} ${visible.count { it.protocol == p }}"
-        }.ifEmpty { "All signal types are off (Settings > Signals shown)" }
+            "${shortName(p)} ${visible.count { it.protocol == p }}"
+        }.ifEmpty { "All signal types are off (tick a box above)" }
         val gps = if (indoor) "Indoor: ${indoorTracker.steps} steps · ${indoorTracker.distFromStart().roundToInt()} m from start"
         else loc?.let { "GPS ±${it.accuracy.roundToInt()} m" } ?: "no GPS fix yet"
         val err = errors.entries.joinToString("; ") { "${it.key.label}: ${it.value}" }
@@ -1780,9 +1809,13 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             .show()
     }
 
+    /** Short name used next to the tick boxes and in the status line. */
+    private fun shortName(p: Protocol): String = if (p == Protocol.RID) "Drone" else p.tag
+
     private fun setProto(p: Protocol, on: Boolean) {
         protoOn[p] = on
         prefs.edit().putBoolean("proto_${p.name}", on).apply()
+        protoBoxes[p]?.let { if (it.isChecked != on) it.isChecked = on }
         if (on) {
             if (running) startScanner(p)
         } else {
@@ -1797,10 +1830,16 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val ctx = this
         val col = MenuUi.column(ctx)
 
-        col.addView(MenuUi.section(ctx, "Signals shown"))
-        col.addView(MenuUi.note(ctx, "Turn a signal type off to stop scanning for it and hide it from the list, radar and map. Drone ID is read through the Wi-Fi and Bluetooth scanners, so it needs one of them on. ADS-B needs an RTL-SDR."))
+        col.addView(MenuUi.section(ctx, "Signal tick boxes on the main screen"))
+        col.addView(MenuUi.note(ctx, "ON shows that tick box on the main screen. OFF hides the box and switches that signal type off (it stops scanning and disappears from the list, radar and map). Drone ID is read through the Wi-Fi and Bluetooth scanners, so it needs one of them on. ADS-B needs an RTL-SDR."))
         for (p in Protocol.values()) {
-            col.addView(MenuUi.toggle(ctx, p.label, { protoOn[p] == true }) { setProto(p, protoOn[p] != true) })
+            col.addView(MenuUi.toggle(ctx, p.label, { protoShown[p] == true }) {
+                val show = protoShown[p] != true
+                protoShown[p] = show
+                prefs.edit().putBoolean("proto_shown_${p.name}", show).apply()
+                if (!show) setProto(p, false)
+                protoBoxes[p]?.visibility = if (show) View.VISIBLE else View.GONE
+            })
         }
 
 

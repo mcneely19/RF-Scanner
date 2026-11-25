@@ -147,7 +147,7 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
     excluded from cloud backups. Not tested against the live API yet.
 28. **More category guesses**: vehicle makes in a Wi-Fi/Bluetooth name, fleet or telematics gear and public
     infrastructure are now guessed from names. They are only hints.
-29. **Drone Remote ID** (Settings > Signals shown > Drone ID): decodes ASTM F3411 / ASD-STAN broadcasts over Bluetooth (service data
+29. **Drone Remote ID** (the "Drone" tick box): decodes ASTM F3411 / ASD-STAN broadcasts over Bluetooth (service data
     0xFFFA) and Wi-Fi beacons (vendor element FA:0B:BC type 0x0D, needs Android 11+). Shows the drone's own reported
     position, serial/ID, type, speed, altitude, operator ID and the pilot position (in the detail text). No walk-and-fit
     is used. Decoder checked against messages made by the reference opendroneid-core-c library. Not receivable on a
@@ -163,9 +163,9 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
     does not prove. They are not alarms. Alerts for the same signal now keep a cooldown, and a stale or replayed
     reading never triggers an alert. Not field-tested.
 
-32. **Signals shown** (Settings): an on/off row for each signal type (Wi-Fi, BLE, BT Classic, Cell, ADS-B, Drone ID).
-    Off stops that scanner and hides its signals from the list, radar and map. The choice is remembered. The tick-box
-    row under the buttons is gone, which also fixes labels wrapping. "Cellular" is now "Cell".
+32. **Signal tick boxes**: the tick boxes under the buttons turn each signal type on or off (remembered). In Settings,
+    "Signal tick boxes on the main screen" has an ON/OFF row for each one: OFF hides that box and switches the signal
+    type off, ON brings the box back (unticked). Labels are short and stay on one line. "Cellular" is now "Cell".
 
 Without Screen-off scanning, the app stops scanning when it goes to the background and resumes when you return.
 
