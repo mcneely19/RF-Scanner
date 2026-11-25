@@ -97,6 +97,7 @@ class Track(val key: String, val protocol: Protocol) {
     var firstLat = 0.0
     var firstLon = 0.0
     var hasFirstPos = false
+    var firstIndoor = false         // the start point came from the indoor step tracker, not GPS
     var followSinceMs = 0L
     var maxTravelM = 0.0
     var following = false

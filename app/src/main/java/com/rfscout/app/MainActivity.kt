@@ -566,6 +566,11 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             t.fixSeq = -1
             t.fix = null
             t.fixNote = ""
+            // tag-following distances were measured in the other position frame
+            t.hasFirstPos = false
+            t.maxTravelM = 0.0
+            t.followSinceMs = 0L
+            t.following = false
         }
     }
 
@@ -1186,7 +1191,18 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         }
         val l = loc ?: return
         if (l.accuracy > 50f || r.timeMs - l.time > 15_000) return
+        val frame = l.provider == "indoor"
+        // the indoor step tracker uses its own frame near 0,0: never mix it with real GPS positions,
+        // and never trust a start point that is more than 100 km away (a bad or stale fix)
+        if (t.hasFirstPos && (t.firstIndoor != frame ||
+                Rf.meters(t.firstLat, t.firstLon, l.latitude, l.longitude) > 100_000.0)) {
+            t.hasFirstPos = false
+            t.maxTravelM = 0.0
+            t.followSinceMs = 0L
+            t.following = false
+        }
         if (!t.hasFirstPos) {
+            t.firstIndoor = frame
             t.firstLat = l.latitude
             t.firstLon = l.longitude
             t.hasFirstPos = true
