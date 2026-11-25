@@ -1,7 +1,12 @@
 package com.rfscout.app
 
 /** Why a signal is on the watchlist. */
-class WatchHit(val label: String, val confidence: String)
+class WatchHit(
+    val label: String,
+    val confidence: String,                 // "medium", "low" or "very low"
+    val basis: String = "community-reported pattern",   // where the pattern comes from
+    val limits: String = ""                 // what a match does NOT show
+)
 
 /**
  * Watchlist for signals that match patterns people have reported on Flock Safety license-plate

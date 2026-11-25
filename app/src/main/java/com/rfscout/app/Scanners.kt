@@ -266,6 +266,9 @@ class BleScanner(
         val mfrId = if (mfr != null && mfr.size() > 0) mfr.keyAt(0) else null
         val tx = r.txPower.takeIf { it != BleScanResult.TX_POWER_NOT_PRESENT }
         val addr = r.device.address
+        val uuids = HashSet<String>()
+        rec?.serviceUuids?.forEach { uuids.add(Signatures.shortUuid(it.uuid.toString())) }
+        rec?.serviceData?.keys?.forEach { uuids.add(Signatures.shortUuid(it.uuid.toString())) }
         if (ridOn()) {
             val sd = rec?.getServiceData(Trackers.UUID_RID)
             if (sd != null) {
@@ -280,7 +283,7 @@ class BleScanner(
             Reading(
                 key = "ble:$addr", protocol = Protocol.BLE, name = name, rssi = r.rssi,
                 freqMhz = 2440, txPower = tx, mfrId = mfrId,
-                tracker = Trackers.kindOf(rec),
+                tracker = Trackers.kindOf(rec), uuids = uuids.toList(),
                 detail = listOf(addr, vendor).filter { it.isNotEmpty() }.joinToString(" · ")
             )
         )

@@ -154,6 +154,15 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
     phone: Wi-Fi NAN action frames (some drones use them). Wi-Fi scans are throttled by Android (about every 10 s or
     slower), so Bluetooth is the better path. Not field-tested with a real drone yet.
 
+30. **Busy-air protection**: very chatty emitters are thinned to about 4 readings a second each. If more than 300
+    readings a second arrive, a **safe mode** thins everything to 1 per signal per second until it calms down. Over
+    1500 tracked signals, the oldest unimportant ones are forgotten (your watchlist hits, tags, ALPR leads and the
+    selected signal are never dropped). **More > Scan health** shows the rates, thinning and errors per protocol.
+31. **Hints with their limits**: low-confidence guesses (Meshtastic radios, Flipper Zero names, MeshCore, generic
+    HC-05/06/03 serial-module names) are shown with a confidence level, where the pattern comes from and what a match
+    does not prove. They are not alarms. Alerts for the same signal now keep a cooldown, and a stale or replayed
+    reading never triggers an alert. Not field-tested.
+
 Without Screen-off scanning, the app stops scanning when it goes to the background and resumes when you return.
 
 ## Known limits

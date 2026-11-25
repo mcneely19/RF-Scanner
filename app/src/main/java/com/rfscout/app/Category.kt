@@ -17,6 +17,7 @@ object Category {
         if (t.trackerKind != null) return "Item tracker (${t.trackerKind})"
         if (t.watch != null) return "Possible ALPR signature (a lead, not proof)"
         t.myHit?.let { return "On your watchlist (${it.pattern})" }
+        t.hint?.let { return "${it.label} (${it.confidence} confidence guess)" }
         val n = t.name.lowercase()
         return when (t.protocol) {
             Protocol.ADSB -> "Aircraft (ADS-B broadcast)"

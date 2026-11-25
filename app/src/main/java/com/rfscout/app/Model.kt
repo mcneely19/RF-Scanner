@@ -46,6 +46,7 @@ data class Reading(
     val cell: CellIdent? = null,
     val lat: Double? = null,    // position the emitter itself reported (ADS-B), if any
     val lon: Double? = null,
+    val uuids: List<String> = emptyList(),  // advertised BLE service UUIDs (16-bit ones in short form)
     val timeMs: Long = System.currentTimeMillis()
 )
 
@@ -72,6 +73,8 @@ class Track(val key: String, val protocol: Protocol) {
     var trackerKind: String? = null
     var cell: CellIdent? = null
     var watch: WatchHit? = null
+    var hint: WatchHit? = null      // low-confidence guess about what this is (Signatures)
+    var uuids: Set<String> = emptySet()
     var myHit: MyEntry? = null      // entry on your own watchlist this signal matches
     var rssi = 0
     var rssiSmooth = 0.0
@@ -107,6 +110,7 @@ class Track(val key: String, val protocol: Protocol) {
         mfrId = r.mfrId ?: mfrId
         trackerKind = r.tracker ?: trackerKind
         cell = r.cell ?: cell
+        if (r.uuids.isNotEmpty() && uuids.size < 12) uuids = uuids + r.uuids
         if (r.lat != null && r.lon != null) fix = Fix(r.lat, r.lon, 0.0, false, false, true)
         rssi = r.rssi
         rssiSmooth = if (count == 0) r.rssi.toDouble() else 0.35 * r.rssi + 0.65 * rssiSmooth
@@ -114,6 +118,7 @@ class Track(val key: String, val protocol: Protocol) {
         if (firstSeenMs == 0L) firstSeenMs = r.timeMs
         watch = if (MyWatch.isMuted(key)) null else Watch.match(this)
         myHit = MyWatch.match(this)
+        hint = Signatures.match(this)
         if (history.isEmpty() || r.timeMs - history[history.size - 1].t >= 500) {
             history.add(HistPt(r.timeMs, r.rssi))
             if (history.size > MAX_HISTORY) history.removeAt(0)

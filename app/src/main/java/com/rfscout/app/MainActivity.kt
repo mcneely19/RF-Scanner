@@ -80,6 +80,7 @@ private const val FOLLOW_DIST_M = 300.0
 private const val FOLLOW_GAP_MS = 180_000L
 private const val MY_ALERT_REPEAT_MS = 10L * 60 * 1000
 private const val ALERT_REPEAT_MS = 30L * 60 * 1000
+private const val MAX_TRACKS = 1500
 
 class MainActivity : Activity(), SensorEventListener, LocationListener {
 
@@ -111,8 +112,10 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     private val deflock by lazy { Deflock(applicationContext, handler) { refreshUi() } }
     private val towers by lazy { Towers(applicationContext, handler) { refreshUi() } }
     private val mine = HashSet<String>()
-    private val alertedAt = HashMap<String, Long>()
-    private val myAlertedAt = HashMap<String, Long>()
+    private val alertedAt = AlertGate(ALERT_REPEAT_MS)
+    private val myAlertedAt = AlertGate(MY_ALERT_REPEAT_MS)
+    private val gate = ReadingGate()
+    private var lastPruneMs = 0L
     private var watchSound = true
     private val secrets by lazy { getSharedPreferences("secrets", MODE_PRIVATE) }   // kept out of cloud backups
     private var bgScan = false
@@ -242,6 +245,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         startBtn = styled("Start", true) { onStartStop() }
         val clearBtn = styled("Clear") {
             tracks.clear()
+            gate.clear()
             breadcrumb.clear()
             SessionLog.clear()
             selectedKey = null
@@ -494,6 +498,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         col.addView(MenuUi.row(ctx, "My watchlist", null, "${MyWatch.entries.size}", go { showMyWatch() }))
         col.addView(MenuUi.row(ctx, "Muted signals", null, "${MyWatch.muted.size}", go { showMuted() }))
         col.addView(MenuUi.row(ctx, "Session debrief", null, null, go { showDebrief() }))
+        col.addView(MenuUi.row(ctx, "Scan health", null, if (gate.safeMode) "SAFE MODE" else null, go { showHealth() }))
         col.addView(MenuUi.row(ctx, "Tags (item trackers)", null, "${tracks.values.count { it.trackerKind != null }}", go { showTags() }))
         col.addView(MenuUi.row(ctx, "Export session (CSV + GPX)", null, null, go { exportSession() }))
         col.addView(MenuUi.section(ctx, "Setup"))
@@ -986,6 +991,9 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     // ------------------------------------------------------------------ readings
 
     private fun onReading(r: Reading) {
+        val wall = System.currentTimeMillis()
+        if (!gate.admit(r.protocol.label, r.key, wall, ReadingGate.gapFor(r.protocol))) return
+        if (tracks.size > MAX_TRACKS && wall - lastPruneMs > 5_000) pruneTracks(wall)
         val t = tracks.getOrPut(r.key) { Track(r.key, r.protocol) }
         val gapMs = if (t.count > 0) r.timeMs - t.lastSeenMs else 0L
         t.update(r)
@@ -1187,9 +1195,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         val minutes = (r.timeMs - t.followSinceMs) / 60_000
         t.following = t.key !in mine && !MyWatch.isMuted(t.key) && t.maxTravelM >= FOLLOW_DIST_M && minutes >= FOLLOW_MIN
         if (t.following && trackerAlerts) {
-            val last = alertedAt[t.key]
-            if (last == null || r.timeMs - last > ALERT_REPEAT_MS) {
-                alertedAt[t.key] = r.timeMs
+            if (alertedAt.allow(t.key, r.timeMs, System.currentTimeMillis())) {
                 t.alerted = true
                 Alerts.trackerAlert(applicationContext, t, minutes, t.maxTravelM.roundToInt())
             }
@@ -1263,6 +1269,50 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     // ------------------------------------------------------------------ my watchlist, mute list, debrief
 
+    /** Forget the least recently heard signals once there are too many, never the ones you care about. */
+    private fun pruneTracks(now: Long) {
+        lastPruneMs = now
+        val drop = TrackPruner.pick(tracks.values.map { it.key to it.lastSeenMs }, MAX_TRACKS) { k ->
+            val t = tracks[k]
+            k == selectedKey || k == sheetKey || k in mine || t == null ||
+                t.myHit != null || t.watch != null || t.following || t.trackerKind != null || t.protocol == Protocol.CELL
+        }
+        for (k in drop) tracks.remove(k)
+        gate.noteEvicted(drop.size)
+    }
+
+    private fun healthText(): String {
+        val now = System.currentTimeMillis()
+        val sb = StringBuilder()
+        sb.append("Incoming: %.0f readings/s".format(gate.totalRate()))
+        if (gate.safeMode) sb.append("  ·  SAFE MODE (thinned to 1 per signal per second)")
+        sb.append("\nTracked signals: ${tracks.size} (limit $MAX_TRACKS), forgotten so far: ${gate.evicted}")
+        if (gate.safeEntries > 0) sb.append("\nSafe mode has switched on ${gate.safeEntries} time(s)")
+        sb.append("\n")
+        for (p in Protocol.values()) {
+            val st = gate.stat(p.label)
+            val on = protoOn[p] == true
+            sb.append("\n").append(p.label).append(if (on) "" else " (off)").append(": ")
+            if (st == null) sb.append("nothing heard yet")
+            else sb.append("${st.received} heard, ${st.dropped} thinned, %.1f/s, last ${durText(now - st.lastMs)} ago".format(st.rate))
+            errors[p]?.let { sb.append("\n   ⚠ ").append(it) }
+        }
+        sb.append("\n\nGPS: ").append(loc?.let { "±${it.accuracy.roundToInt()} m, ${durText(now - it.time)} old" } ?: "no fix")
+        sb.append("\nScreen-off scanning: ").append(if (bgScan) "on" else "off")
+        sb.append("\nWi-Fi scans are throttled by Android; low Wi-Fi rates are normal unless you turn off Wi-Fi scan throttling in Developer options.")
+        return sb.toString()
+    }
+
+    private fun showHealth() {
+        val col = MenuUi.column(this)
+        col.addView(MenuUi.note(this, healthText()).apply { setTextIsSelectable(true) })
+        var dlg: android.app.Dialog? = null
+        dlg = MenuUi.dialog(this, "Scan health", col, listOf(
+            MenuUi.button(this, "Reset counters") { gate.clear(); dlg?.dismiss(); showHealth() },
+            MenuUi.button(this, "Close") { dlg?.dismiss() }
+        ))
+    }
+
     private fun saveMyWatch() = MyWatchStore.save(prefs)
 
     /** Re-evaluate every known signal after the watchlist or mute list changed. */
@@ -1270,14 +1320,13 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         for (t in tracks.values) {
             t.watch = if (MyWatch.isMuted(t.key)) null else Watch.match(t)
             t.myHit = MyWatch.match(t)
+            t.hint = Signatures.match(t)
             if (MyWatch.isMuted(t.key)) t.following = false
         }
     }
 
     private fun alertMine(t: Track, e: MyEntry, now: Long) {
-        val last = myAlertedAt[t.key]
-        if (last != null && now - last < MY_ALERT_REPEAT_MS) return
-        myAlertedAt[t.key] = now
+        if (!myAlertedAt.allow(t.key, now, System.currentTimeMillis())) return
         Alerts.watchAlert(applicationContext, t, e, watchSound)
     }
 
@@ -1504,9 +1553,12 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             parts.add("★ On your watchlist: \"${e.pattern}\"" + (if (e.note.isNotBlank()) " (${e.note})" else "") + ". Tap Unwatch to remove it.")
         }
         if (MyWatch.isMuted(t.key)) parts.add("Muted: no alerts or flags for this signal. (Devices that change their address will look new.)")
+        t.hint?.let { h ->
+            parts.add("Hint (${h.confidence} confidence): ${h.label}.\nBasis: ${h.basis}.\n${h.limits}".trim())
+        }
         if (w != null) {
             parts.add(
-                "⚑ Possible ALPR signature: ${w.label} (${w.confidence} confidence).\n" +
+                "⚑ Possible ALPR signature: ${w.label} (${w.confidence} confidence, ${w.basis}).\n" +
                     "These patterns are community-reported and can match other devices, so treat this as a lead, not proof.\n" +
                     (sightings[t.key]?.let { "Map check: ${mappedStatus(it)}" } ?: "")
             )
@@ -1527,6 +1579,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         statusText.text = counts + "\n" + gps + " · heading ${headingDeg.roundToInt()}°" +
             (if (bgScan) " · screen-off scan on" else "") +
             (if (err.isNotEmpty()) "\n⚠ $err" else "") +
+            (if (gate.safeMode) "\n⚠ Very busy: safe mode is thinning readings" else "") +
             (if (alpr > 0) "\n⚑ $alpr possible ALPR signature(s) nearby" else "") +
             (if (mineN > 0) "\n★ $mineN watchlist match(es) in range" else "") +
             (if (follow > 0) "\n⚠ $follow tag(s) may be following you" else "") +
