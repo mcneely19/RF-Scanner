@@ -145,6 +145,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
     private lateinit var map: MapView
     private lateinit var statusText: TextView
     private lateinit var targetText: TextView
+    private lateinit var stopBtn: Button
     private lateinit var arrow: ArrowView
     private val adapter = SignalAdapter()
 
@@ -330,7 +331,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             setPadding(dp(2), dp(4), dp(2), dp(4))
             clipToPadding = false
             setOnItemClickListener { _, _, pos, _ ->
-                selectedKey = this@MainActivity.adapter.items[pos].key
+                selectedKey = toggledSelection(this@MainActivity.adapter.items[pos].key)
                 this@MainActivity.adapter.notifyDataSetChanged()
                 updateTarget()
             }
@@ -340,8 +341,8 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             }
         }
         radar = RadarView(this) { key ->
-            // tapping a dot selects it and scrolls the list below to its row
-            selectedKey = key
+            // tapping a dot selects it (tapping the selected one again deselects) and scrolls the list to its row
+            selectedKey = toggledSelection(key)
             refreshUi()
             val idx = radarAdapter.items.indexOfFirst { it.key == key }
             if (idx >= 0) radarList.smoothScrollToPosition(idx)
@@ -352,7 +353,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             dividerHeight = 1
             selector = ColorDrawable(Color.TRANSPARENT)
             setOnItemClickListener { _, _, pos, _ ->
-                selectedKey = radarAdapter.items[pos].key
+                selectedKey = toggledSelection(radarAdapter.items[pos].key)
                 refreshUi()
             }
             setOnItemLongClickListener { _, _, pos, _ ->
@@ -410,7 +411,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         sheet = InfoSheet(
             this,
             onTrack = { key ->
-                selectedKey = key
+                selectedKey = toggledSelection(key)
                 refreshUi()
             },
             onCalibrate = { key -> showCalibrate(key) },
@@ -442,6 +443,10 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         panel.addView(arrow, LinearLayout.LayoutParams(dp(84), dp(84)))
         panel.addView(targetText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             leftMargin = dp(12)
+        })
+        stopBtn = styled("Stop") { stopTracking() }.apply { visibility = View.GONE }
+        panel.addView(stopBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            leftMargin = dp(8)
         })
         root.addView(panel, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(4)
@@ -1538,6 +1543,14 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
 
     // ------------------------------------------------------------------ info sheet
 
+    /** Tapping the signal that is already tracked stops tracking it; anything else selects it. */
+    private fun toggledSelection(key: String): String? = if (key == selectedKey) null else key
+
+    private fun stopTracking() {
+        selectedKey = null
+        refreshUi()
+    }
+
     private fun openSheet(key: String) {
         sheetKey = key
         sheet.visibility = View.VISIBLE
@@ -1611,6 +1624,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
         if (t == null) {
             targetBearing = null
             targetText.text = "Tap a signal to track it"
+            stopBtn.visibility = View.GONE
             updateArrow()
             return
         }
@@ -1649,6 +1663,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             )
         }
         targetText.text = sb
+        stopBtn.visibility = View.VISIBLE
         updateArrow()
     }
 

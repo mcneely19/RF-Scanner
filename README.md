@@ -167,6 +167,9 @@ Local build (Android Studio, or a JDK 17 and the Android SDK): `./gradlew assemb
     "Signal tick boxes on the main screen" has an ON/OFF row for each one: OFF hides that box and switches the signal
     type off, ON brings the box back (unticked). Labels are short and stay on one line. "Cellular" is now "Cell".
 
+33. **Stop tracking**: tap the tracked signal again (list, radar list, or radar dot), press **Stop** on the bottom target
+    panel, or press **Stop tracking** on its info page.
+
 Without Screen-off scanning, the app stops scanning when it goes to the background and resumes when you return.
 
 ## Known limits

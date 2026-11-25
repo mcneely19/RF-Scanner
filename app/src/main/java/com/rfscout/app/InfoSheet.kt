@@ -155,7 +155,7 @@ internal class InfoSheet(
         sb.append("\nSample points recorded: ${t.samples.size}")
         body.text = sb
 
-        trackBtn.text = if (tracking) "Tracking ✓" else "Track"
+        trackBtn.text = if (tracking) "Stop tracking" else "Track"
         calBtn.visibility = if (t.protocol == Protocol.CELL || t.protocol.reported) GONE else VISIBLE
         mineBtn.visibility = if (t.trackerKind != null) VISIBLE else GONE
         watchBtn.text = if (t.myHit != null) "Unwatch" else "Watch"
